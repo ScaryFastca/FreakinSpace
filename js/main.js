@@ -195,6 +195,72 @@ function calculateMoonAngle(daysSinceJ2000) {
     return ((localAngle % 360) + 360) % 360 * Math.PI / 180;
 }
 
+// Aligned mode starts every orbit on +X and advances from the selected
+// alignment epoch. Keep this calculation shared by rendering, scale changes,
+// and distance readouts so those paths cannot drift apart.
+function calculateAlignedOrbitAngle(bodyData) {
+    const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
+    const fallbackPeriod = bodyData.type === 'moon' ? 27.3 : 365.25;
+    const period = bodyData.orbitalPeriod || fallbackPeriod;
+    return (elapsedDays / period) * Math.PI * 2;
+}
+
+function findParentBodyData(bodyData) {
+    return solarSystem.children.find(parent =>
+        parent.children && parent.children.some(child => child.name === bodyData.name)
+    ) || null;
+}
+
+// Return a body's simulated physical X/Z position in kilometres. This mirrors
+// the scene transforms without using compressed display units.
+function getSimulatedPhysicalPosition(bodyData) {
+    if (!bodyData) return null;
+    if (bodyData.name === 'Sun') return { x: 0, z: 0 };
+
+    if (bodyData.type === 'planet') {
+        const angle = orbitalMode === 'realistic'
+            ? calculatePlanetAngle(bodyData, (simDate - J2000) / MS_PER_DAY)
+            : calculateAlignedOrbitAngle(bodyData);
+        return {
+            x: Math.cos(angle) * bodyData.distance,
+            z: (orbitalMode === 'realistic' ? -1 : 1) * Math.sin(angle) * bodyData.distance
+        };
+    }
+
+    if (bodyData.type === 'moon') {
+        const parentData = findParentBodyData(bodyData);
+        const parentPosition = getSimulatedPhysicalPosition(parentData);
+        if (!parentData || !parentPosition) return null;
+
+        let offsetX;
+        let offsetZ;
+        if (orbitalMode === 'realistic') {
+            const daysSinceJ2000 = (simDate - J2000) / MS_PER_DAY;
+            const parentAngle = calculatePlanetAngle(parentData, daysSinceJ2000);
+            const localAngle = bodyData.name === 'Moon'
+                ? calculateMoonAngle(daysSinceJ2000)
+                : calculatePlanetAngle(bodyData, daysSinceJ2000);
+            const localX = Math.cos(localAngle) * bodyData.distance;
+            const localZ = Math.sin(localAngle) * bodyData.distance;
+
+            // Match the parent's orbit-group Y rotation used by the scene.
+            offsetX = Math.cos(parentAngle) * localX + Math.sin(parentAngle) * localZ;
+            offsetZ = -Math.sin(parentAngle) * localX + Math.cos(parentAngle) * localZ;
+        } else {
+            const angle = calculateAlignedOrbitAngle(bodyData);
+            offsetX = Math.cos(angle) * bodyData.distance;
+            offsetZ = Math.sin(angle) * bodyData.distance;
+        }
+
+        return {
+            x: parentPosition.x + offsetX,
+            z: parentPosition.z + offsetZ
+        };
+    }
+
+    return null;
+}
+
 // Calculate precise dynamic real-world distance between an object and Earth
 export function getCurrentDistanceToEarth(data) {
     if (!data) return null;
@@ -206,67 +272,14 @@ export function getCurrentDistanceToEarth(data) {
     }
 
     const earthData = solarSystem.children.find(p => p.name === 'Earth');
-    if (!earthData) return data.distance;
+    const earthPosition = getSimulatedPhysicalPosition(earthData);
+    const targetPosition = getSimulatedPhysicalPosition(data);
+    if (!earthPosition || !targetPosition) return data.distance;
 
-    // Helper to compute actual XY plane coordinates (heliocentric/geocentric) based on the pure simulation angles
-    const getMathPos = (bodyData) => {
-        if (bodyData.name === 'Sun') return {x: 0, z: 0};
-        
-        let simMode = orbitalMode;
-        
-        if (simMode === 'realistic') {
-            const daysSinceJ2000 = (simDate - J2000) / MS_PER_DAY;
-            if (bodyData.type === 'planet') {
-                const angle = calculatePlanetAngle(bodyData, daysSinceJ2000);
-                return {
-                    x: Math.cos(angle) * bodyData.distance,
-                    z: -Math.sin(angle) * bodyData.distance 
-                };
-            } else if (bodyData.type === 'moon') {
-                const parent = solarSystem.children.find(p => p.children && p.children.some(m => m.name === bodyData.name));
-                if (!parent) return {x: 0, z: 0};
-                const pPos = getMathPos(parent);
-                const angle = bodyData.name === 'Moon' ? calculateMoonAngle(daysSinceJ2000) : calculatePlanetAngle(bodyData, daysSinceJ2000);
-                return {
-                    x: pPos.x + Math.cos(angle) * bodyData.distance,
-                    z: pPos.z + Math.sin(angle) * bodyData.distance 
-                };
-            }
-        } else {
-            // Aligned mode rotates based on time in animate loop
-            const bodyRecord = celestialBodies.get(bodyData.name);
-            if (!bodyRecord) return {x: 0, z: 0};
-            
-            if (bodyData.type === 'planet') {
-                const angle = time * bodyRecord.orbitSpeed * 10;
-                return {
-                    x: Math.cos(angle) * bodyData.distance,
-                    z: Math.sin(angle) * bodyData.distance
-                };
-            } else if (bodyData.type === 'moon') {
-                const pPos = bodyRecord.parent ? getMathPos(bodyRecord.parent.userData || bodyRecord.parent) : {x:0, z:0};
-                const angle = time * bodyRecord.orbitSpeed * 100;
-                return {
-                    x: pPos.x + Math.cos(angle) * bodyData.distance,
-                    z: pPos.z + Math.sin(angle) * bodyData.distance
-                };
-            }
-        }
-        return {x: 0, z: 0};
-    };
-    
-    // In Aligned mode for moons, the parent lookup might be slightly tricky with standard logic, 
-    // so we just rely on standard orbit distance if we can't find it
-    try {
-        const earthPos = getMathPos(earthData);
-        const targetPos = getMathPos(data);
-        
-        const dx = earthPos.x - targetPos.x;
-        const dz = earthPos.z - targetPos.z;
-        return Math.sqrt(dx*dx + dz*dz) || data.distance;
-    } catch(e) {
-        return data.distance;
-    }
+    return Math.hypot(
+        earthPosition.x - targetPosition.x,
+        earthPosition.z - targetPosition.z
+    );
 }
 
 // Global state
@@ -303,6 +316,8 @@ let simSpeed = 0;                   // ms of sim time per ms of real time (0 = p
 let simPaused = true;               // Whether simulation is paused
 let timeScale = 1.0;                // Speed multiplier set by the slider
 let lastFrameTime = Date.now();     // For delta-time calculations
+let lastTimelineDisplayMinute = null;
+let realisticMoonPositionsDirty = true;
 
 function mapSliderToRealisticSpeed(val) {
     const v = val / 100; // -1..1
@@ -355,6 +370,11 @@ function getCurrentSpeedMultiplier() {
     }
 }
 
+function getSimulationRate() {
+    // Aligned mode's 1× baseline is one simulated day per real second.
+    return orbitalMode === 'aligned' ? timeScale * MS_PER_DAY : simSpeed;
+}
+
 function setSpeedMultiplier(multiplier) {
     if (multiplier === 0) {
         simPaused = true;
@@ -398,7 +418,6 @@ let starField;
 let currentStarFieldScale = 100000; // Track current scale for smooth transitions
 let animationId;
 let time = 0;
-let simOrbitTime = 0;               // Time accumulator for aligned mode orbits
 let alignedStartDate = new Date(); // The starting date for planet alignment in Aligned mode
 let categorySortModes = {
     'Solar System': 'distance',  // Default: distance from Sun
@@ -429,6 +448,16 @@ let constellationSprites = [];
 let raycaster, mouse;
 let isDragging = false;
 let mouseDownPos = { x: 0, y: 0 };
+let hoverStateDirty = false;
+let controlsStateDirty = false;
+let lastControlsDistance = null;
+let lastHomeIndicatorUpdate = 0;
+const _animLocalPosition = new THREE.Vector3();
+const _animYAxis = new THREE.Vector3(0, 1, 0);
+const _animEarthPosition = new THREE.Vector3();
+const _animDirectionToSun = new THREE.Vector3();
+const _animWorldPosition = new THREE.Vector3();
+const _animCameraOffset = new THREE.Vector3();
 
 
 
@@ -494,6 +523,10 @@ function init() {
         MIDDLE: THREE.MOUSE.PAN,
         RIGHT: THREE.MOUSE.PAN
     };
+    controls.addEventListener('change', () => {
+        controlsStateDirty = true;
+        hoverStateDirty = true;
+    });
 
     // Lighting
     // Low ambient light so we can see the dark sides of planets slightly
@@ -536,6 +569,7 @@ function init() {
     window.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mouseup', onMouseUp);
     window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('popstate', applyViewModeFromUrl);
     
     // Initialize raycaster for hover detection
     raycaster = new THREE.Raycaster();
@@ -673,7 +707,7 @@ function init() {
             const picked = new Date(e.target.value);
             if (!isNaN(picked.getTime())) {
                 simDate = picked;
-                updateRealisticPositions(simDate);
+                if (orbitalMode === 'realistic') updateRealisticPositions(simDate);
                 updateTimelineDisplay();
             }
         });
@@ -684,8 +718,10 @@ function init() {
         simDate = new Date();
         if (orbitalMode === 'aligned') {
             alignedStartDate = new Date(simDate.getTime());
+            orbitGroups.forEach(group => { group.rotation.y = 0; });
+        } else {
+            updateRealisticPositions(simDate);
         }
-        updateRealisticPositions(simDate);
         updateTimelineDisplay();
         syncTimelineUI();
     });
@@ -743,7 +779,7 @@ function init() {
     
     if (modeParam === 'sizeCompare') {
         // Toggle directly to size comparison mode
-        toggleViewMode();
+        toggleViewMode(null, false);
         
         // Check for specific target
         // Wait briefly for the view to switch and meshes to be created
@@ -2399,11 +2435,14 @@ function animate() {
     const nowMs = Date.now();
     const realDeltaMs = nowMs - lastFrameTime;
     lastFrameTime = nowMs;
+    const frameScale = Math.min(realDeltaMs / 16.67, 4);
+    const simulationRate = getSimulationRate();
+    let simulationAdvanced = false;
 
     // Advance simulation date and update planet positions
-    if (!simPaused && simSpeed !== 0) {
-        // Apply speed multiplier (timeScale) to realistic mode time stepping
-        simDate = new Date(simDate.getTime() + (realDeltaMs / 1000) * simSpeed);
+    if (!simPaused && simulationRate !== 0) {
+        simDate = new Date(simDate.getTime() + (realDeltaMs / 1000) * simulationRate);
+        simulationAdvanced = true;
         
         if (orbitalMode === 'realistic') {
             updateRealisticPositions(simDate, 'planets');
@@ -2419,12 +2458,10 @@ function animate() {
             }
         }
 
-        // Advance simulation orbital time in aligned mode
-        simOrbitTime += (realDeltaMs / 16.67) * 0.001 * timeScale;
     }
 
     // Always increment time for continuous background visual effects (pulsing stars, etc.)
-    time += 0.001;
+    time += Math.min(realDeltaMs, 66.68) * 0.00006;
 
     // Update star field to follow camera as a skybox
     if (starField) {
@@ -2448,24 +2485,22 @@ function animate() {
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
+        if (viewMode !== 'map') return;
+
         if (body.orbitGroup && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Planet orbiting sun (only in aligned mode; realistic mode uses orbitGroup.rotation.y)
-            const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
-            const period = body.data.orbitalPeriod || 365.25;
-            const angle = (elapsedDays / period) * Math.PI * 2;
-            const localPos = new THREE.Vector3(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
-            if(body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
-            body.mesh.position.copy(localPos);
+            const angle = calculateAlignedOrbitAngle(body.data);
+            _animLocalPosition.set(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+            if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
+            body.mesh.position.copy(_animLocalPosition);
         }
 
         if (body.parent && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Moon orbiting planet (only in aligned mode; realistic mode sets positions in updateRealisticPositions)
-            const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
-            const period = body.data.orbitalPeriod || 27.3;
-            const angle = (elapsedDays / period) * Math.PI * 2;
-            const localPos = new THREE.Vector3(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
-            if(body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
-            body.mesh.position.copy(localPos);
+            const angle = calculateAlignedOrbitAngle(body.data);
+            _animLocalPosition.set(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+            if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
+            body.mesh.position.copy(_animLocalPosition);
             // Tidal locking: keep the same face toward the planet as it orbits
             if (viewMode !== 'sizeCompare') {
                 body.mesh.rotation.y = tidalLockRotationY(body, angle);
@@ -2478,17 +2513,16 @@ function animate() {
             // their orbital position (aligned: above; realistic: updateRealisticPositions).
         } else if (body.data.rotationPeriod) {
             if (viewMode === 'sizeCompare') {
-                body.mesh.rotation.y += 0.002 / body.data.rotationPeriod;
+                body.mesh.rotation.y += (0.002 * frameScale) / body.data.rotationPeriod;
             } else if (name === 'Earth') {
                 // Align Earth's rotation with the time of day relative to the Sun
-                const earthPos = new THREE.Vector3();
-                body.mesh.getWorldPosition(earthPos);
+                body.mesh.getWorldPosition(_animEarthPosition);
                 
                 // Vector pointing from Earth to the Sun (at origin 0,0,0)
-                const dirToSun = new THREE.Vector3(0, 0, 0).sub(earthPos).normalize();
+                _animDirectionToSun.copy(_animEarthPosition).negate().normalize();
                 
                 // Angle of the Sun in Earth's ecliptic plane (XZ)
-                const sunAngle = Math.atan2(dirToSun.x, dirToSun.z);
+                const sunAngle = Math.atan2(_animDirectionToSun.x, _animDirectionToSun.z);
                 
                 // UTC time of day in hours
                 const utcHours = simDate.getUTCHours() + simDate.getUTCMinutes() / 60 + simDate.getUTCSeconds() / 3600;
@@ -2512,7 +2546,7 @@ function animate() {
         // Animate star surface texture and fade out glows/spikes up close
         // Use visualMesh for distant stars, mesh for solar system stars
         const starMesh = body.visualMesh || (body.mesh.material ? body.mesh : null);
-        if (body.type === 'star' && starMesh) {
+        if (body.type === 'star' && starMesh && body.mesh.visible) {
             updateStarMeshEffects(starMesh, time);
         }
         
@@ -2520,14 +2554,14 @@ function animate() {
         if (body.data.hasBands && body.mesh.children.length > 0) {
             body.mesh.children.forEach((child, idx) => {
                 if (child.material && child.material.transparent) {
-                    child.rotation.y += 0.0005 * (idx + 1);
+                    child.rotation.y += 0.0005 * frameScale * (idx + 1);
                 }
             });
         }
     });
     
     // Update moon positions in realistic mode now that parent planet rotations are up to date
-    if (orbitalMode === 'realistic') {
+    if (viewMode === 'map' && orbitalMode === 'realistic' && (simulationAdvanced || realisticMoonPositionsDirty)) {
         updateRealisticPositions(simDate, 'moons');
     }
 
@@ -2548,7 +2582,7 @@ function animate() {
         sizeComparisonObjects.forEach((body, name) => {
             // Rotate bodies
             if (body.data.rotationPeriod) {
-                body.mesh.rotation.y += 0.002 / body.data.rotationPeriod;
+                body.mesh.rotation.y += (0.002 * frameScale) / body.data.rotationPeriod;
             }
 
             // Cancel out Y-rotation for Saturn's rings to prevent them from wobbling
@@ -2577,10 +2611,9 @@ function animate() {
                 targetBody = celestialBodies.get(flyToAnimation.bodyName);
             }
             if (targetBody && targetBody.mesh && viewMode !== 'sizeCompare') {
-                const currentWorldPos = new THREE.Vector3();
-                targetBody.mesh.getWorldPosition(currentWorldPos);
-                flyToAnimation.endTarget.copy(currentWorldPos);
-                flyToAnimation.endPos.copy(currentWorldPos).add(flyToAnimation.offset);
+                targetBody.mesh.getWorldPosition(_animWorldPosition);
+                flyToAnimation.endTarget.copy(_animWorldPosition);
+                flyToAnimation.endPos.copy(_animWorldPosition).add(flyToAnimation.offset);
             }
         }
 
@@ -2637,43 +2670,55 @@ function animate() {
         }
 
         if (body && body.mesh) {
-            const worldPosition = new THREE.Vector3();
-            body.mesh.getWorldPosition(worldPosition);
+            body.mesh.getWorldPosition(_animWorldPosition);
             
             // Get current camera offset from target (spherical coords)
-            const offset = camera.position.clone().sub(controls.target);
+            _animCameraOffset.copy(camera.position).sub(controls.target);
             
             // If "Cam moves with object" is ON, camera travels with object
             if (isCameraLocked) {
                 // Camera maintains its spherical position relative to the moving target
                 // This allows free orbiting while traveling with the object
-                controls.target.copy(worldPosition);
-                camera.position.copy(worldPosition).add(offset);
+                controls.target.copy(_animWorldPosition);
+                camera.position.copy(_animWorldPosition).add(_animCameraOffset);
             } else {
                 // Camera lock is OFF - camera stays in space, just pans to follow
                 // Only update target position, camera stays where it is
                 // This makes the camera rotate to track the object
-                controls.target.copy(worldPosition);
+                controls.target.copy(_animWorldPosition);
                 cameraOffsetFromTarget = null;
             }
         }
     }
 
-    // Update home indicator position and rotation
-    updateHomeIndicator();
+    // The DOM-based home indicator does not need to run at render frequency.
+    if (nowMs - lastHomeIndicatorUpdate >= 33) {
+        updateHomeIndicator();
+        lastHomeIndicatorUpdate = nowMs;
+    }
 
     controls.update();
 
-    // Update hover state if mouse has been moved at least once
-    if (lastMouseX !== -1 && lastMouseY !== -1) {
+    if (controlsStateDirty && viewMode === 'map') {
+        const controlsDistance = camera.position.distanceTo(controls.target);
+        if (lastControlsDistance === null || Math.abs(controlsDistance - lastControlsDistance) > 0.0001) {
+            updateZoomLevelFromDistance(controlsDistance);
+            lastControlsDistance = controlsDistance;
+        }
+    }
+    controlsStateDirty = false;
+
+    // Raycast only when pointer or camera state changed.
+    if (hoverStateDirty && lastMouseX !== -1 && lastMouseY !== -1 && !HOVER_NONE_MQ.matches) {
         updateHoverState(lastMouseX, lastMouseY);
+        hoverStateDirty = false;
     }
 
     // Update hover pan animation
     updateHoverPan();
     
-    // Draw guide line if hovering
-    drawGuideLine();
+    // Draw the animated guide only while one is active.
+    if (hoveredObjectName) drawGuideLine();
     
     renderer.render(scene, camera);
 }
@@ -2733,7 +2778,7 @@ function focusOnBody(name) {
     let maxChildDistance = 0;
     if (body.data.children) {
         body.data.children.forEach(child => {
-            const childDist = scaleDistance(child.distance);
+            const childDist = scaleDistance(child.distance, true);
             maxChildDistance = Math.max(maxChildDistance, childDist);
         });
     }
@@ -2935,16 +2980,20 @@ function focusOnBody(name) {
 
 function updateZoomLevelFromDistance(distance) {
     // Set zoom level based on camera distance to target
+    let nextZoomLevel;
     if (distance < 100) {
-        currentZoomLevel = 'EARTH_MOON';
+        nextZoomLevel = 'EARTH_MOON';
     } else if (distance < 500) {
-        currentZoomLevel = 'INNER_SOLAR';
+        nextZoomLevel = 'INNER_SOLAR';
     } else if (distance < 2000) {
-        currentZoomLevel = 'FULL_SOLAR';
+        nextZoomLevel = 'FULL_SOLAR';
     } else {
-        currentZoomLevel = 'STELLAR';
+        nextZoomLevel = 'STELLAR';
     }
-    updateZoomLevel();
+    if (nextZoomLevel !== currentZoomLevel) {
+        currentZoomLevel = nextZoomLevel;
+        updateZoomLevel();
+    }
     updateUI();
 }
 
@@ -2974,43 +3023,12 @@ function stepSizeComparison(direction) {
 }
 
 function onWheel(event) {
-    event.preventDefault();
-
     if (viewMode === 'sizeCompare') {
+        event.preventDefault();
         stepSizeComparison(event.deltaY > 0 ? 1 : -1);
-        return;
     }
-    
-    const delta = event.deltaY;
-    const currentDistance = camera.position.distanceTo(controls.target);
-    
-    // Remember the zoom level before zooming
-    const previousZoomLevel = currentZoomLevel;
-
-    // Apply zoom with smoother factor
-    const zoomFactor = delta > 0 ? 1.05 : 0.95;
-
-    // Zoom floor: just above the focused body's surface instead of a hard
-    // 10 units, so small bodies (the Moon is only ~0.35 units) can fill the
-    // view. The 1.4x margin keeps the surface outside the camera near plane.
-    let minZoomDistance = controls.minDistance || 1.5;
-    if (currentFocusedBody) {
-        const fb = celestialBodies.get(currentFocusedBody);
-        const fbMesh = fb && (fb.visualMesh || fb.mesh);
-        if (fbMesh && fbMesh.geometry && fbMesh.geometry.parameters && fbMesh.geometry.parameters.radius) {
-            minZoomDistance = Math.max(fbMesh.geometry.parameters.radius * 1.4, camera.near * 2.5);
-        }
-    }
-    const newDistance = Math.max(currentDistance * zoomFactor, minZoomDistance);
-    
-    const direction = camera.position.clone().sub(controls.target).normalize();
-    camera.position.copy(controls.target).add(direction.multiplyScalar(newDistance));
-
-    // Determine zoom level based on new distance
-    updateZoomLevelFromDistance(newDistance);
-    
-    // Don't clear focused body when zooming - this was causing objects to disappear
-    // The focused body should stay visible regardless of zoom level
+    // Map-mode wheel and pinch zoom are owned by OrbitControls. Its change
+    // event marks the zoom/UI state dirty, avoiding a second zoom here.
 }
 
 function updateZoomLevel() {
@@ -3955,12 +3973,11 @@ function onMouseMove(event) {
     isMouseOverUI = !!event.target.closest('#ui-container');
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
+    hoverStateDirty = true;
 
     // Touch devices fire synthetic mousemove on tap; skip hover effects there
     // (tap-to-focus still works via the click path)
     if (HOVER_NONE_MQ.matches) return;
-
-    updateHoverState(lastMouseX, lastMouseY);
 }
 
 function showTooltip(data, x, y) {
@@ -4122,7 +4139,7 @@ function toggleScale() {
             // In aligned mode update mesh position directly; in realistic mode
             // updateRealisticPositions() below will handle it via orbitGroup rotation
             if (orbitalMode !== 'realistic') {
-                const angle = time * body.orbitSpeed * 10;
+                const angle = calculateAlignedOrbitAngle(planetData);
                 body.mesh.position.x = Math.cos(angle) * newDistance;
                 body.mesh.position.z = Math.sin(angle) * newDistance;
             }
@@ -4132,6 +4149,10 @@ function toggleScale() {
             if (orbitObj) {
                 scene.remove(orbitObj.visible);
                 scene.remove(orbitObj.hitTarget);
+                orbitObj.visible.geometry.dispose();
+                orbitObj.visible.material.dispose();
+                orbitObj.hitTarget.geometry.dispose();
+                orbitObj.hitTarget.material.dispose();
                 createOrbitLine(newDistance, planetData.color, planetData.name);
             }
         }
@@ -4155,12 +4176,6 @@ function toggleScale() {
             );
         }
     });
-    
-    // Recreate starfield with new scale
-    if (starField) {
-        scene.remove(starField);
-        createStarField();
-    }
     
     // Adjust camera if needed
     if (currentFocusedBody) {
@@ -4187,6 +4202,7 @@ function updateRealisticPositions(date, phase = 'all') {
     const daysSinceJ2000 = (date - J2000) / MS_PER_DAY;
 
     if (phase === 'all' || phase === 'planets') {
+        realisticMoonPositionsDirty = true;
         solarSystem.children.forEach(planetData => {
             const body = celestialBodies.get(planetData.name);
             if (body && body.orbitGroup && planetData.orbitalPeriod) {
@@ -4209,9 +4225,9 @@ function updateRealisticPositions(date, phase = 'all') {
                             ? calculateMoonAngle(daysSinceJ2000)
                             : calculatePlanetAngle(moonData, daysSinceJ2000);
                         const moonDist = scaleDistance(moonData.distance, true);
-                        const unrotatedPos = new THREE.Vector3(Math.cos(moonAngle) * moonDist, 0, Math.sin(moonAngle) * moonDist);
-                        unrotatedPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.mesh.rotation.y);
-                        moonBody.mesh.position.copy(unrotatedPos);
+                        _animLocalPosition.set(Math.cos(moonAngle) * moonDist, 0, Math.sin(moonAngle) * moonDist);
+                        _animLocalPosition.applyAxisAngle(_animYAxis, -body.mesh.rotation.y);
+                        moonBody.mesh.position.copy(_animLocalPosition);
                         // Tidal locking: same face toward the planet every orbit
                         if (viewMode !== 'sizeCompare') {
                             moonBody.mesh.rotation.y = tidalLockRotationY(moonBody, moonAngle);
@@ -4220,6 +4236,7 @@ function updateRealisticPositions(date, phase = 'all') {
                 });
             }
         });
+        if (phase === 'moons') realisticMoonPositionsDirty = false;
     }
 }
 
@@ -4284,10 +4301,13 @@ function hideTimelinePanel() {
     }
 }
 
-function updateTimelineDisplay() {
+function updateTimelineDisplay(force = false) {
     const el = document.getElementById('tl-date-display');
     if (!el) return;
     const d = simDate;
+    const displayedMinute = Math.floor(d.getTime() / 60000);
+    if (!force && displayedMinute === lastTimelineDisplayMinute) return;
+    lastTimelineDisplayMinute = displayedMinute;
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const hh = String(d.getUTCHours()).padStart(2, '0');
     const mm = String(d.getUTCMinutes()).padStart(2, '0');
@@ -4360,7 +4380,18 @@ function toggleConstellations() {
 
 
 
-function toggleViewMode(e) {
+function applyViewModeFromUrl() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestedMode = urlParams.get('mode') === 'sizeCompare' ? 'sizeCompare' : 'map';
+    if (requestedMode !== viewMode) toggleViewMode(null, false);
+
+    const target = urlParams.get('target');
+    if (requestedMode === 'sizeCompare' && target) {
+        focusOnSizeComparisonObject(target);
+    }
+}
+
+function toggleViewMode(e, updateHistory = true) {
     if (e && e.preventDefault) {
         e.preventDefault();
     }
@@ -4398,7 +4429,7 @@ function toggleViewMode(e) {
         
         // Update URL to reflect Size Compare mode
         url.searchParams.set('mode', 'sizeCompare');
-        window.history.pushState({mode: 'sizeCompare'}, '', url);
+        if (updateHistory) window.history.pushState({mode: 'sizeCompare'}, '', url);
         
         // Update buttons to link back to Map
         if (toggleBtn) toggleBtn.setAttribute('href', '?mode=map');
@@ -4435,7 +4466,7 @@ function toggleViewMode(e) {
         // Update URL to reflect Map mode (default)
         url.searchParams.delete('mode');
         url.searchParams.delete('target'); // Clear target too
-        window.history.pushState({mode: 'map'}, '', url);
+        if (updateHistory) window.history.pushState({mode: 'map'}, '', url);
         
         // Update buttons to link to Size Compare
         if (toggleBtn) toggleBtn.setAttribute('href', '?mode=sizeCompare');
@@ -4549,22 +4580,50 @@ function showMapView() {
 function hideSizeComparisonView() {
     if (sizeComparisonGroup) {
         sizeComparisonGroup.visible = false;
-        // Recursively hide all children to ensure glow effects are hidden
-        sizeComparisonGroup.traverse((child) => {
-            child.visible = false;
+    }
+}
+
+function disposeDetachedObject(root) {
+    root.traverse(object => {
+        if (object.geometry) object.geometry.dispose();
+        const materials = Array.isArray(object.material) ? object.material : [object.material];
+        materials.filter(Boolean).forEach(material => {
+            Object.values(material).forEach(value => {
+                if (value && value.isTexture) value.dispose();
+            });
+            material.dispose();
         });
+    });
+}
+
+function focusSizeComparisonStart() {
+    const startObjName = 'Gaia BH1';
+    const startObj = sizeComparisonObjects.get(startObjName);
+    if (!startObj) {
+        camera.position.set(0, 0, 5000);
+        controls.target.set(0, 0, 0);
+        return;
+    }
+
+    scene.updateMatrixWorld(true);
+    focusOnSizeComparisonObject(startObjName);
+
+    // The comparison view intentionally opens at its starting object rather
+    // than replaying a long transition from the map's coordinate scale.
+    if (flyToAnimation) {
+        camera.position.copy(flyToAnimation.endPos);
+        controls.target.copy(flyToAnimation.endTarget);
+        controls.update();
+        flyToAnimation = null;
     }
 }
 
 function createSizeComparisonView() {
-    // Remove existing size comparison group if it exists
+    // This scene is expensive to build; retain and reuse it across view toggles.
     if (sizeComparisonGroup) {
-        // Remove all children to ensure memory is released
-        while(sizeComparisonGroup.children.length > 0){ 
-            sizeComparisonGroup.remove(sizeComparisonGroup.children[0]); 
-        }
-        scene.remove(sizeComparisonGroup);
-        sizeComparisonObjects.clear();
+        sizeComparisonGroup.visible = true;
+        focusSizeComparisonStart();
+        return;
     }
     
     // Create a new group for size comparison objects
@@ -4598,6 +4657,7 @@ function createSizeComparisonView() {
                 continue;
             }
             mesh.remove(child);
+            disposeDetachedObject(child);
         }
 
         // Calculate the actual radius used by createBodyMesh to generate the geometry
@@ -4670,11 +4730,6 @@ function createSizeComparisonView() {
     // Add to scene
     scene.add(sizeComparisonGroup);
     
-    // Ensure all children are visible
-    sizeComparisonGroup.traverse((child) => {
-        child.visible = true;
-    });
-    
     // Position camera to see all objects? NO.
     // Seeing all objects in loose linear scale is impossible (Earth becomes sub-pixel).
     // Instead, start at the BEGINNING (Earth) so the user can scroll/pan right.
@@ -4685,28 +4740,7 @@ function createSizeComparisonView() {
     // Actually, Earth is at x = sizeComparisonObjects.get('Earth').mesh.position.x
     // World X = GroupX + LocalX = (-totalWidth/2) + LocalX.
     
-    // START UP SEQUENCE: Focus on Gaia BH1 immediately
-    const startObjName = 'Gaia BH1';
-    const startObj = sizeComparisonObjects.get(startObjName);
-    if (startObj) {
-        // Trigger the focus function
-        scene.updateMatrixWorld(true);
-        focusOnSizeComparisonObject(startObjName);
-        
-        // Snap the camera instantly instead of animating for the initial load
-        if (flyToAnimation) {
-             camera.position.copy(flyToAnimation.endPos);
-             controls.target.copy(flyToAnimation.endTarget);
-             controls.update(); 
-             
-             // Clear the animation object
-             flyToAnimation = null;
-        }
-    } else {
-        // Fallback if missing
-        camera.position.set(0, 0, 5000);
-        controls.target.set(0, 0, 0);
-    }
+    focusSizeComparisonStart();
     
     // Clear any focused body
     // currentFocusedBody = null; // Keep it focused on Earth per logic above
@@ -4814,10 +4848,9 @@ function updateStarMeshEffects(starMesh, time) {
     // Fade out glare spikes and outer corona up close
     const visualRadius = starMesh.userData.visualRadius || 5;
     
-    const starWorldPos = new THREE.Vector3();
-    starMesh.getWorldPosition(starWorldPos);
+    starMesh.getWorldPosition(_animWorldPosition);
     
-    const dist = camera.position.distanceTo(starWorldPos);
+    const dist = camera.position.distanceTo(_animWorldPosition);
     
     // Smooth transition from 7.5x radius down to 2.5x radius
     const fadeStart = visualRadius * 7.5;
