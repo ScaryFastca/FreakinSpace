@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Local tooling and agent settings
+.claude/
+.agents/
+.codex/
+
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Local captures and OS/editor noise
+*.mp4
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+

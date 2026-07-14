@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>SpaceMap - Interactive 3D Universe Explorer</title>
+    <link rel="stylesheet" href="css/styles.css?v=5">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="ui-container">
+        <div id="sidebar" class="collapsed">
+            <button id="sidebar-toggle" title="Toggle Sidebar" aria-label="Toggle Sidebar"></button>
+            <div class="sheet-header mobile-only">
+                <span class="sheet-title">Objects</span>
+                <button id="sidebar-close" class="sheet-close" aria-label="Close">×</button>
+            </div>
+            <div id="object-list"></div>
+        </div>
+        
+        <div id="header">
+            <div class="header-row">
+                <h1>SpaceMap</h1>
+                <div class="header-buttons">
+                    <button id="home-btn" class="header-btn" title="Fly to Earth">
+                        <span class="icon">🏠</span> 
+                        <span class="text">Home</span>
+                    </button>
+                    <a id="size-compare-btn" class="header-btn" href="?mode=sizeCompare">
+                        <span class="icon">📏</span>
+                        <span class="text">Size Comparison</span>
+                    </a>
+                </div>
+            </div>
+            <div id="zoom-level">Earth-Moon System</div>
+        </div>
+        
+        <div id="controls-info">
+            <div class="control-hint">
+                <span class="key">Drag</span> to rotate
+            </div>
+            <div class="control-hint" id="pan-control-hint">
+                <span class="key">Shift+Drag</span> or <span class="key">Middle Mouse</span> to pan
+            </div>
+            <div class="control-hint">
+                <span class="key">Scroll</span> to zoom in & out
+            </div>
+            <div class="control-hint">
+                <span class="key">Click</span> an object to focus
+            </div>
+        </div>
+
+        <div id="hover-tooltip" class="hidden">
+            <h3 id="tooltip-name"></h3>
+            <div id="tooltip-content"></div>
+        </div>
+
+        <div id="body-info" class="hidden">
+            <button id="minimize-info" title="Minimize Details">▼</button>
+            <button id="close-info">×</button>
+            <div class="body-title-row">
+                <h2 id="body-name"></h2>
+                <span id="body-size-subtitle"></span>
+            </div>
+            <div id="body-details"></div>
+        </div>
+
+        <div id="scale-indicator">
+            <div class="scale-bar"></div>
+            <span id="scale-label">384,000 km</span>
+        </div>
+
+        <div id="scale-toggle-container">
+            <div class="sheet-header mobile-only">
+                <span class="sheet-title">Settings</span>
+                <button id="settings-close" class="sheet-close" aria-label="Close">×</button>
+            </div>
+            <button id="scale-toggle" class="toggle-btn">
+                <span class="toggle-label">Scale:</span>
+                <span id="scale-mode">Compressed</span>
+            </button>
+            <button id="camera-lock-toggle" class="toggle-btn">
+                <span class="toggle-label">Cam moves with object:</span>
+                <span id="camera-lock-mode">On</span>
+            </button>
+            <button id="orbital-toggle" class="toggle-btn">
+                <span class="toggle-label">Solar System:</span>
+                <span id="orbital-mode">Aligned</span>
+            </button>
+            <button id="show-stars-toggle" class="toggle-btn">
+                <span class="toggle-label">Solar System Stars:</span>
+                <span id="show-stars-mode">On</span>
+            </button>
+            <button id="constellations-toggle" class="toggle-btn">
+                <span class="toggle-label">Constellations:</span>
+                <span id="constellations-mode">On</span>
+            </button>
+            <button id="home-indicator-toggle" class="toggle-btn">
+                <span class="toggle-label">Home Arrow:</span>
+                <span id="home-indicator-mode">Off</span>
+            </button>
+        </div>
+
+        <div id="home-indicator" class="hidden">
+            <div id="home-arrow">⬆</div>
+            <div id="home-label">Home</div>
+        </div>
+
+        <div id="info-popup">
+            <div id="info-popup-content">
+                <button id="info-popup-close">×</button>
+                <h3>Beta Version</h3>
+                <p>This is a new app. It may have bugs and inaccurate information.</p>
+                <p class="info-contact">Questions? <a href="mailto:space@scaryfast.ca">space@scaryfast.ca</a></p>
+            </div>
+        </div>
+
+        <button id="info-button" class="hidden" title="About SpaceMap">i</button>
+
+        <div id="timeline-panel" class="hidden">
+            <!-- Date display, picker button, and Now button all on one line -->
+            <div id="tl-date-row">
+                <div id="tl-date-display"></div>
+                <button id="tl-date-picker-btn" class="tl-btn tl-date-btn" title="Choose date/time">📅 Select Date</button>
+                <input type="datetime-local" id="tl-date-picker" style="display: none;" title="Jump to date">
+                <button id="tl-goto-now" class="tl-btn tl-now-btn" title="Jump to current date/time">Now</button>
+            </div>
+            
+            <!-- Playback buttons on the left, speed slider on the right -->
+            <div id="tl-controls-slider-row">
+                <div id="timeline-controls">
+                    <button id="tl-reverse-fast" class="tl-btn" title="Rewind Fast (Double Notch)">⏮</button>
+                    <button id="tl-reverse" class="tl-btn" title="Rewind Notch">◀</button>
+                    <button id="tl-play-pause" class="tl-btn tl-play" title="Play / Pause">▶</button>
+                    <button id="tl-forward" class="tl-btn" title="Forward Notch">▶▶</button>
+                    <button id="tl-forward-fast" class="tl-btn" title="Forward Fast (Double Notch)">⏭</button>
+                </div>
+                
+                <div id="tl-speed-slider-row">
+                    <span id="tl-speed-label" class="tl-speed">Paused</span>
+                    <span class="tl-slider-label">Reverse</span>
+                    <input type="range" id="tl-speed-slider" min="-100" max="100" value="0" step="1" title="Adjust speed & direction">
+                    <span class="tl-slider-label">Forward</span>
+                </div>
+            </div>
+        </div>
+
+        <div id="compare-arrows" class="hidden">
+            <button id="compare-prev" class="compare-arrow" aria-label="Previous (smaller) object">‹</button>
+            <button id="compare-next" class="compare-arrow" aria-label="Next (bigger) object">›</button>
+        </div>
+
+        <nav id="mobile-nav">
+            <button id="mnav-objects" class="mnav-btn">
+                <span class="mnav-icon">🪐</span><span class="mnav-label">Objects</span>
+            </button>
+            <button id="mnav-home" class="mnav-btn">
+                <span class="mnav-icon">🏠</span><span class="mnav-label">Home</span>
+            </button>
+            <button id="mnav-time" class="mnav-btn">
+                <span class="mnav-icon">🕐</span><span class="mnav-label">Time</span>
+            </button>
+            <button id="mnav-compare" class="mnav-btn">
+                <span class="mnav-icon">📏</span><span class="mnav-label">Compare</span>
+            </button>
+            <button id="mnav-settings" class="mnav-btn">
+                <span class="mnav-icon">⚙️</span><span class="mnav-label">Settings</span>
+            </button>
+            <button id="mnav-info" class="mnav-btn" aria-label="About SpaceMap">
+                <span class="mnav-icon">ℹ️</span><span class="mnav-label">Info</span>
+            </button>
+        </nav>
+    </div>
+
+    <canvas id="space-canvas"></canvas>
+
+    <script type="module" src="js/main.js?v=8"></script>
+</body>
+</html>
