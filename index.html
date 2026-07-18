@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=5">
+    <link rel="stylesheet" href="css/styles.css?v=9">
     <script type="importmap">
     {
         "imports": {
@@ -56,6 +56,9 @@
                 <span class="key">Click</span> an object to focus
             </div>
         </div>
+        <button id="controls-info-button" type="button" hidden
+                title="Show map controls" aria-label="Show map controls"
+                aria-controls="controls-info" aria-expanded="false">&#128433;</button>
 
         <div id="hover-tooltip" class="hidden">
             <h3 id="tooltip-name"></h3>
@@ -111,6 +114,27 @@
         <div id="home-indicator" class="hidden">
             <div id="home-arrow">⬆</div>
             <div id="home-label">Home</div>
+        </div>
+
+        <div id="stellar-comparison" aria-hidden="true">
+            <div id="sun-hologram" class="stellar-hologram sun-hologram">
+                <div class="hologram-beam"></div>
+                <div class="hologram-reticle"></div>
+                <div class="hologram-core"></div>
+                <div class="hologram-label">
+                    <span class="hologram-name">Sun</span>
+                    <span class="hologram-ratio"></span>
+                </div>
+            </div>
+            <div id="earth-hologram" class="stellar-hologram earth-hologram">
+                <div class="hologram-beam"></div>
+                <div class="hologram-reticle"></div>
+                <div class="hologram-core"></div>
+                <div class="hologram-label">
+                    <span class="hologram-name">Earth</span>
+                    <span class="hologram-ratio"></span>
+                </div>
+            </div>
         </div>
 
         <div id="info-popup">
@@ -180,7 +204,8 @@
     </div>
 
     <canvas id="space-canvas"></canvas>
+    <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=8"></script>
+    <script type="module" src="js/main.js?v=33"></script>
 </body>
 </html>

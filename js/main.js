@@ -3,6 +3,27 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js';
 import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js';
 
+// Pull confirmed mapped exoplanets into the true-scale lineup without
+// duplicating their physical data. Hypothetical companions remain excluded.
+const mappedExoplanetComparisons = nearbyStars.flatMap(host =>
+    (host.children || [])
+        .filter(child => child.type === 'planet'
+            && !/hypothetical/i.test(child.description || ''))
+        .map(child => ({
+            ...child,
+            type: 'exoplanet',
+            hostName: host.name
+        }))
+);
+const sizeComparisonCatalog = Array.from(new Map(
+    [...sizeComparison, ...mappedExoplanetComparisons]
+        .map(item => [item.name, item])
+).values()).sort((a, b) => (a.radius || 0) - (b.radius || 0));
+const mappedExoplanetHostsByName = new Map(
+    mappedExoplanetComparisons.map(planet => [planet.name, planet.hostName])
+);
+const AU_IN_KM = 149597870.7;
+
 // Real NASA-derived equirectangular surface maps (Solar System Scope, CC-BY 4.0,
 // https://www.solarsystemscope.com/textures/). Bodies not listed here fall back
 // to the procedural generator in textures.js.
@@ -284,6 +305,7 @@ export function getCurrentDistanceToEarth(data) {
 
 // Global state
 let scene, camera, renderer, controls;
+let sunLight;
 let celestialBodies = new Map();
 let orbitGroups = new Map();
 let orbitLines = new Map();
@@ -293,6 +315,13 @@ let scaleMode = 'compressed'; // 'compressed' or 'realistic'
 let orbitalMode = 'aligned'; // 'aligned' or 'realistic' - controls planet positions
 let showHomeIndicator = true; // Toggle for home direction arrow
 let showStars = true; // Toggle for background stars visibility
+// Keep interactive stars distinguishable from the 1-3.5px background field.
+// This is the full diameter of the existing glow/spike sprite, not the star core.
+const COARSE_POINTER_MQ = window.matchMedia('(pointer: coarse)');
+const MIN_INTERACTIVE_STAR_GLINT_PX = 18;
+const TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
+const MOUSE_BODY_HIT_RADIUS_PX = 18;
+const TOUCH_BODY_HIT_RADIUS_PX = 36;
 let showConstellations = true; // Toggle for constellation lines and labels
 let constellationsCache = null; // cached JSON for constellations
 let constellationsGroup = null; // THREE.Group containing lines and labels
@@ -307,6 +336,12 @@ let sizeComparisonObjects = new Map(); // Stores meshes for size comparison view
 let sizeComparisonGroup = null; // Group containing all size comparison objects
 let compareLight = null; // Camera-following "headlight" so comparison objects are always lit
 let moonShadows = []; // Projected transit-shadow decals: { moonMesh, planetMesh, decal, radius, lift }
+let stellarComparisonOverlay = null;
+let sunHologram = null;
+let earthHologram = null;
+let stellarComparisonOpacity = 0;
+const SUN_REFERENCE_RADIUS_KM = 696340;
+const EARTH_REFERENCE_RADIUS_KM = 6371;
 
 // Spacetime fabric and gravity wells - REMOVED
 
@@ -416,12 +451,18 @@ let isCameraLocked = true; // Default: camera moves with object
 let cameraOffsetFromTarget = null; // Stores camera offset when locked
 let starField;
 let currentStarFieldScale = 100000; // Track current scale for smooth transitions
+let travelStreakCanvas = null;
+let travelStreakContext = null;
+let travelStreakParticles = [];
+let travelStreaksWereVisible = false;
+const REDUCED_MOTION_MQ = window.matchMedia('(prefers-reduced-motion: reduce)');
 let animationId;
 let time = 0;
 let alignedStartDate = new Date(); // The starting date for planet alignment in Aligned mode
 let categorySortModes = {
     'Solar System': 'distance',  // Default: distance from Sun
     'Stars': 'size',              // Default: biggest first
+    'Exoplanets': 'name',         // Default: alphabetical
     'Black Holes': 'name'         // Default: alphabetical
 }; // Each category has its own sort mode: 'name', 'size', or 'distance'
 
@@ -429,6 +470,7 @@ let categorySortModes = {
 let categoryExpansionState = {
     'Solar System': true,   // Default: expanded
     'Stars': true,          // Default: expanded
+    'Exoplanets': true,     // Default: expanded
     'Black Holes': true     // Default: expanded
 };
 
@@ -448,6 +490,7 @@ let constellationSprites = [];
 let raycaster, mouse;
 let isDragging = false;
 let mouseDownPos = { x: 0, y: 0 };
+let activeTapPointerId = null;
 let hoverStateDirty = false;
 let controlsStateDirty = false;
 let lastControlsDistance = null;
@@ -458,6 +501,9 @@ const _animEarthPosition = new THREE.Vector3();
 const _animDirectionToSun = new THREE.Vector3();
 const _animWorldPosition = new THREE.Vector3();
 const _animCameraOffset = new THREE.Vector3();
+const _comparisonProjectedPosition = new THREE.Vector3();
+const _comparisonDirection = new THREE.Vector3();
+const _comparisonCameraForward = new THREE.Vector3();
 
 
 
@@ -505,6 +551,8 @@ function init() {
     renderer.shadowMap.enabled = false;
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    setupTravelStreaks();
+    setupStellarComparison();
 
     // Controls
     controls = new OrbitControls(camera, renderer.domElement);
@@ -536,7 +584,7 @@ function init() {
     // Add point light at the Sun's position to illuminate planets from all directions
     // PointLight radiates in all directions, so planets are lit correctly regardless of orbital position
     // As planets orbit, they're automatically lit from the correct angle relative to the Sun
-    const sunLight = new THREE.PointLight(0xffffff, 3.5, 0, 0); // distance=0 (infinite), decay=0 (no falloff)
+    sunLight = new THREE.PointLight(0xffffff, 3.5, 0, 0); // distance=0 (infinite), decay=0 (no falloff)
     sunLight.position.set(0, 0, 0); // At the Sun's position (origin)
     scene.add(sunLight);
 
@@ -566,8 +614,9 @@ function init() {
     // Event listeners
     window.addEventListener('resize', onWindowResize);
     window.addEventListener('wheel', onWheel, { passive: false });
-    window.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('pointerdown', onMouseDown);
+    window.addEventListener('pointerup', onMouseUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('popstate', applyViewModeFromUrl);
     
@@ -599,7 +648,7 @@ function init() {
         sizeCompareBtn.addEventListener('click', toggleViewMode);
     }
     
-    document.getElementById('home-btn').addEventListener('click', flyToEarth);
+    document.getElementById('home-btn').addEventListener('click', () => flyToEarth());
 
     const sidebarToggle = document.getElementById('sidebar-toggle');
     if (sidebarToggle) {
@@ -733,6 +782,12 @@ function init() {
     // Prevent sidebar scroll from affecting the map
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
+        // Start with the object drawer open on roomy desktop viewports.
+        // This runs only at startup so a user's manual toggle is not overridden later.
+        if (LARGE_DESKTOP_LAYOUT_MQ.matches && !isMobileLayout()) {
+            sidebar.classList.remove('collapsed');
+        }
+
         sidebar.addEventListener('wheel', (e) => {
             e.stopPropagation();
         }, { passive: false });
@@ -767,6 +822,7 @@ function init() {
 
     // Setup info popup
     setupInfoPopup();
+    setupControlsInfo();
 
     // Setup mobile bottom nav + sheets
     setupMobileNav();
@@ -1015,6 +1071,23 @@ function scaleDistance(distance, isMoon = false, isStellar = false) {
         // Earth's distance (1 AU) should be around 100 units
         return (distance / AU) * 100;
     }
+}
+
+function scaleExoplanetDistance(distance, hostMesh, planetMesh) {
+    const scaledDistance = scaleDistance(distance);
+    const hostRadius = hostMesh.userData.visualRadius
+        || hostMesh.geometry?.parameters?.radius
+        || 5;
+    const planetRadius = planetMesh.userData.visualRadius
+        || planetMesh.geometry?.parameters?.radius
+        || 1;
+
+    // Compressed orbital distances and deliberately enlarged body radii use
+    // different scales. Preserve the orbit when it already clears the star,
+    // otherwise add enough display-only separation to clear its 2x corona and
+    // leave a readable gap between the host and planet.
+    const minimumDisplayDistance = hostRadius * 3 + planetRadius * 1.5;
+    return Math.max(scaledDistance, minimumDisplayDistance);
 }
 
 function createDistantObjectMesh(data) {
@@ -1335,7 +1408,9 @@ function createBodyMesh(data) {
             depthWrite: false,
         });
         const sprite = new THREE.Sprite(spriteMat);
-        sprite.scale.setScalar(visualRadius * 5);
+        const baseGlintScale = visualRadius * 5;
+        sprite.scale.setScalar(baseGlintScale);
+        sprite.userData.baseScale = baseGlintScale;
         sprite.raycast = function() {};
         sprite.name = 'starSpike';
         mesh.add(sprite);
@@ -1414,9 +1489,11 @@ function createNearbyStars() {
 
         // Create planets for stars that have them
         if (starData.children) {
+            let outermostPlanetDistance = 0;
             starData.children.forEach(planetData => {
                 const planetMesh = createBodyMesh(planetData);
-                const distance = scaleDistance(planetData.distance);
+                const distance = scaleExoplanetDistance(planetData.distance, mesh, planetMesh);
+                outermostPlanetDistance = Math.max(outermostPlanetDistance, distance);
                 planetMesh.position.x = distance;
                 planetMesh.visible = false;
                 
@@ -1429,9 +1506,26 @@ function createNearbyStars() {
                     data: planetData,
                     type: 'exoplanet',
                     parent: systemContainer,
+                    orbitRadius: distance,
                     isDistant: true
                 });
             });
+
+            // The emissive host mesh is only visual; MeshStandardMaterial needs
+            // a real light. Keep this light local to its planetary system so
+            // multiple stars do not wash out unrelated objects.
+            if (outermostPlanetDistance > 0) {
+                const hostLightColor = new THREE.Color(starDisplayColor(starData))
+                    .lerp(new THREE.Color(0xffffff), 0.25);
+                const hostLight = new THREE.PointLight(
+                    hostLightColor,
+                    3.5,
+                    outermostPlanetDistance * 4,
+                    0
+                );
+                hostLight.name = 'exoplanetHostLight';
+                systemContainer.add(hostLight);
+            }
         }
     });
 }
@@ -2439,6 +2533,14 @@ function animate() {
     const simulationRate = getSimulationRate();
     let simulationAdvanced = false;
 
+    // The Solar light has infinite range to cover the compressed Solar System.
+    // Turn it off when visiting a distant system so exoplanets are illuminated
+    // only by their own finite-range host light.
+    const focusedBody = currentFocusedBody ? celestialBodies.get(currentFocusedBody) : null;
+    if (sunLight) {
+        sunLight.visible = viewMode === 'map' && !(focusedBody && focusedBody.isDistant);
+    }
+
     // Advance simulation date and update planet positions
     if (!simPaused && simulationRate !== 0) {
         simDate = new Date(simDate.getTime() + (realDeltaMs / 1000) * simulationRate);
@@ -2628,18 +2730,106 @@ function animate() {
 
         if (flyToAnimation.isSizeCompare) {
             const p = progress;
-            const sX = flyToAnimation.startPos.x, eX = flyToAnimation.endPos.x;
-            const sY = flyToAnimation.startPos.y, eY = flyToAnimation.endPos.y;
-            const sZ = flyToAnimation.startPos.z, eZ = flyToAnimation.endPos.z;
+            const p2 = p * p;
+            const p3 = p2 * p;
+            const h00 = 2 * p3 - 3 * p2 + 1;
+            const h10 = p3 - 2 * p2 + p;
+            const h01 = -2 * p3 + 3 * p2;
+            const tangentScale = flyToAnimation.duration / 1000;
 
-            // Ease-out cubic: starts at full speed from current position, decelerates into destination.
-            // Works correctly for both interrupted and fresh animations.
-            const t = 1 - Math.pow(1 - p, 3);
+            // Hermite interpolation starts fresh moves at rest and carries the
+            // current velocity into a new destination when the wheel retargets
+            // an animation in progress. End velocity is always zero.
+            camera.position.set(
+                h00 * flyToAnimation.startPos.x
+                    + h10 * tangentScale * flyToAnimation.startVelocity.x
+                    + h01 * flyToAnimation.endPos.x,
+                h00 * flyToAnimation.startPos.y
+                    + h10 * tangentScale * flyToAnimation.startVelocity.y
+                    + h01 * flyToAnimation.endPos.y,
+                h00 * flyToAnimation.startPos.z
+                    + h10 * tangentScale * flyToAnimation.startVelocity.z
+                    + h01 * flyToAnimation.endPos.z
+            );
+            controls.target.set(
+                h00 * flyToAnimation.startTarget.x
+                    + h10 * tangentScale * flyToAnimation.startTargetVelocity.x
+                    + h01 * flyToAnimation.endTarget.x,
+                h00 * flyToAnimation.startTarget.y
+                    + h10 * tangentScale * flyToAnimation.startTargetVelocity.y
+                    + h01 * flyToAnimation.endTarget.y,
+                h00 * flyToAnimation.startTarget.z
+                    + h10 * tangentScale * flyToAnimation.startTargetVelocity.z
+                    + h01 * flyToAnimation.endTarget.z
+            );
+        } else if (flyToAnimation.travelTurn
+            && progress < flyToAnimation.travelTurn.fraction) {
+            // Pull away from the current view while rotating toward the new
+            // destination. Forward travel begins only after the camera aligns.
+            const turn = flyToAnimation.travelTurn;
+            const turnProgress = THREE.MathUtils.smoothstep(
+                progress,
+                0,
+                turn.fraction
+            );
+            const fullRotation = new THREE.Quaternion().setFromUnitVectors(
+                turn.startDirection,
+                turn.endDirection
+            );
+            const partialRotation = new THREE.Quaternion().identity()
+                .slerp(fullRotation, turnProgress);
+            const viewDirection = turn.startDirection.clone()
+                .applyQuaternion(partialRotation)
+                .normalize();
 
-            camera.position.x = THREE.MathUtils.lerp(sX, eX, t);
-            camera.position.y = THREE.MathUtils.lerp(sY, eY, t);
-            camera.position.z = THREE.MathUtils.lerp(sZ, eZ, t);
-            controls.target.lerpVectors(flyToAnimation.startTarget, flyToAnimation.endTarget, t);
+            camera.position.lerpVectors(
+                flyToAnimation.startPos,
+                turn.pullbackPos,
+                turnProgress
+            );
+            controls.target.copy(camera.position)
+                .addScaledVector(viewDirection, turn.lookDistance);
+        } else if (flyToAnimation.isInterstellarFlight) {
+            const turnFraction = flyToAnimation.travelTurn.fraction;
+            const travelProgress = THREE.MathUtils.clamp(
+                (progress - turnFraction) / (1 - turnFraction),
+                0,
+                1
+            );
+            let flightProgress;
+
+            // Keep distant targets growing steadily instead of leaving them as
+            // a dot until the final instant. This changes only the speed along
+            // the line; the flight path itself remains perfectly straight.
+            const startDistance = flyToAnimation.startDistanceToTarget;
+            const endDistance = flyToAnimation.endDistanceToTarget;
+            if (Math.abs(startDistance - endDistance) < 0.001) {
+                flightProgress = THREE.MathUtils.smootherstep(travelProgress, 0, 0.94);
+            } else {
+                // Returning to the tiny solar-system scale needs a full-length
+                // ease. Otherwise even a smooth world-space lerp covers the
+                // entire visible final approach in its last few frames.
+                const growthProgress = flyToAnimation.isInterstellarReturn
+                    ? THREE.MathUtils.smootherstep(travelProgress, 0, 1)
+                    : THREE.MathUtils.smoothstep(travelProgress, 0, 0.92);
+                const desiredDistance = Math.exp(THREE.MathUtils.lerp(
+                    Math.log(startDistance),
+                    Math.log(endDistance),
+                    growthProgress
+                ));
+                flightProgress = THREE.MathUtils.clamp(
+                    (startDistance - desiredDistance) / (startDistance - endDistance),
+                    0,
+                    1
+                );
+            }
+
+            camera.position.lerpVectors(
+                flyToAnimation.travelTurn.pullbackPos,
+                flyToAnimation.endPos,
+                flightProgress
+            );
+            controls.target.copy(flyToAnimation.endTarget);
         } else {
             // Regular map view — direct linear interpolation with global ease
             camera.position.lerpVectors(flyToAnimation.startPos, flyToAnimation.endPos, easeProgress);
@@ -2648,6 +2838,9 @@ function animate() {
 
         // Animation complete
         if (progress >= 1) {
+            if (flyToAnimation.endMinDistance !== undefined) {
+                controls.minDistance = flyToAnimation.endMinDistance;
+            }
             flyToAnimation = null;
             cameraOffsetFromTarget = null;
         }
@@ -2706,6 +2899,9 @@ function animate() {
             lastControlsDistance = controlsDistance;
         }
     }
+
+    updateTravelStreaks(flyToAnimation, frameScale);
+    updateStellarComparison(frameScale);
     controlsStateDirty = false;
 
     // Raycast only when pointer or camera state changed.
@@ -2727,6 +2923,17 @@ function focusOnBody(name) {
     const body = celestialBodies.get(name);
     if (!body) return;
 
+    // Selecting Earth from interstellar space should use the same pullback and
+    // direct homeward flight as the Home button, while opening Earth's card.
+    if (name === 'Earth') {
+        const earthPosition = new THREE.Vector3();
+        body.mesh.getWorldPosition(earthPosition);
+        if (camera.position.distanceTo(earthPosition) > 50000) {
+            flyToEarth(true);
+            return;
+        }
+    }
+
     // Special handling for Solar System marker
     if (name === 'Solar System') {
         currentFocusedBody = name;
@@ -2735,11 +2942,27 @@ function focusOnBody(name) {
         updateZoomLevel();
         updateUI();
         
-        // Reset camera to view full solar system
-        controls.target.set(0, 0, 0);
+        // Reset camera to view the full solar system. Interstellar returns use
+        // the same pullback, turn, and direct-flight sequence as every jump.
+        const solarTarget = new THREE.Vector3(0, 0, 0);
         controls.minDistance = 1;
         const distance = scaleMode === 'realistic' ? 30000 : 3000;
-        camera.position.set(distance * 0.8, distance * 0.5, distance);
+        const solarCameraPos = new THREE.Vector3(
+            distance * 0.8,
+            distance * 0.5,
+            distance
+        );
+
+        if (camera.position.distanceTo(solarCameraPos) > 50000) {
+            flyToAnimation = createInterstellarReturnFlight(
+                solarCameraPos,
+                solarTarget,
+                'Solar System'
+            );
+        } else {
+            controls.target.copy(solarTarget);
+            camera.position.copy(solarCameraPos);
+        }
         
         showBodyInfo(body.data);
         return;
@@ -2769,6 +2992,13 @@ function focusOnBody(name) {
     const box = new THREE.Box3().setFromObject(meshForSizing);
     const size = box.getSize(new THREE.Vector3());
     const visualRadius = Math.max(size.x, size.y, size.z) / 2;
+    // The bounds above include decorative glow/spike children. Camera framing
+    // should use the solid body's radius so a giant star does not become tiny.
+    const ownRadius = meshForSizing.userData.visualRadius
+        || (meshForSizing.geometry && meshForSizing.geometry.parameters
+            && meshForSizing.geometry.parameters.radius)
+        || visualRadius;
+    const isStarBody = body.type === 'star' || body.data.type === 'star';
     
     // Calculate camera distance
     let distance;
@@ -2778,7 +3008,10 @@ function focusOnBody(name) {
     let maxChildDistance = 0;
     if (body.data.children) {
         body.data.children.forEach(child => {
-            const childDist = scaleDistance(child.distance, true);
+            const childBody = celestialBodies.get(child.name);
+            const childDist = body.isDistant && childBody
+                ? childBody.mesh.position.length()
+                : scaleDistance(child.distance, true);
             maxChildDistance = Math.max(maxChildDistance, childDist);
         });
     }
@@ -2808,14 +3041,17 @@ function focusOnBody(name) {
     }
     distance = Math.max(baseDistance, maxChildDistance * moonMultiplier);
 
-    // Enforce min distance based on object size to avoid clipping inside large objects
-    // For stars, account for glow layers which can be 4x the visual radius
-    // For massive stars (visual radius > 30), use even larger multiplier for better viewing
-    const isMassiveStar = (body.type === 'star' || body.data.type === 'star') && visualRadius > 30;
-    const glowMultiplier = isMassiveStar ? 8.0 : (body.type === 'star' || body.data.type === 'star' ? 5.0 : 2.5);
-    const minDistance = visualRadius * glowMultiplier;
+    // Frame stars by their solid sphere, not by the much larger decorative
+    // diffraction sprite. Five radii fills roughly 38% of a 60-degree viewport.
+    const isMassiveStar = isStarBody && ownRadius > 30;
+    const minDistance = isStarBody ? ownRadius * 5 : visualRadius * 2.5;
     distance = Math.max(distance, minDistance);
     distance = Math.max(distance, 6);   // Absolute minimum
+    if (body.type === 'exoplanet' && body.orbitRadius) {
+        // Start with both the planet and its host in frame. The user can zoom
+        // closer after arriving at the system.
+        distance = Math.max(distance, body.orbitRadius * 1.5);
+    }
     // No maximum cap - let giant stars have appropriate viewing distance
 
     // Adaptive zoom floor: allow zooming in until the body nearly fills the
@@ -2823,15 +3059,23 @@ function focusOnBody(name) {
     // body's own sphere radius, NOT visualRadius — that comes from a Box3 that
     // includes children, so for planets it would swallow their moons' orbits
     // and block zooming (OrbitControls enforces minDistance every frame).
-    const ownRadius = (meshForSizing.geometry && meshForSizing.geometry.parameters
-        && meshForSizing.geometry.parameters.radius) || visualRadius;
     controls.minDistance = Math.max(ownRadius * 1.4, camera.near * 2.5);
     
     // Calculate target camera position
     let offset;
 
     // For solar system objects (not distant stars), approach from the sunlit side
-    if (!body.isDistant && body.type !== 'star' && body.data.type !== 'star') {
+    if (body.type === 'exoplanet' && body.parent) {
+        const hostPosition = new THREE.Vector3();
+        body.parent.getWorldPosition(hostPosition);
+        const starToPlanet = worldPosition.clone().sub(hostPosition).normalize();
+        const viewDirection = new THREE.Vector3().crossVectors(starToPlanet, _animYAxis);
+        if (viewDirection.lengthSq() < 0.001) viewDirection.set(0, 0, 1);
+        viewDirection.normalize();
+        offset = viewDirection.multiplyScalar(distance);
+        offset.y += distance * 0.25;
+        offset.setLength(distance * 1.1);
+    } else if (!body.isDistant && body.type !== 'star' && body.data.type !== 'star') {
         // Start from the direction pointing from the body back toward the Sun
         // (origin), then swing ~35° around and lift above the ecliptic so a
         // sliver of the night side stays visible for depth.
@@ -2843,70 +3087,31 @@ function focusOnBody(name) {
         offset.y += distance * 0.3;
         offset.setLength(distance * 1.3);
     } else {
-        // For stars and distant objects, position camera to ensure both the star AND solar system are visible
-        // Calculate direction from star to solar system (origin at 0,0,0)
-        const homePosition = new THREE.Vector3(0, 0, 0);
-        const directionToHome = homePosition.clone().sub(worldPosition).normalize();
-
-        // Calculate distance to home for camera positioning
-        const distanceToHome = worldPosition.distanceTo(homePosition);
-
-        // Calculate required camera distance from star
-        // Cap the distance-based calculation to prevent extreme values for very distant stars
-        const distanceBasedCameraPos = Math.min(distanceToHome * 0.12, distance * 3);
-        const cameraDistFromStar = Math.max(distance, distanceBasedCameraPos);
-
-        // Position camera on the FAR side of the star from home
-        // This ensures when looking at the star, home is behind you/to the side, in frame
-        const awayFromHome = directionToHome.clone().multiplyScalar(-1); // Opposite direction
-
-        // Add perpendicular offset for a side angle (better composition)
-        const perpendicular = new THREE.Vector3(-directionToHome.z, 0, directionToHome.x).normalize();
-
-        // Calculate camera position to ensure both star AND home are visible
-        // We want to position the camera so that:
-        // 1. The star is at the center of view
-        // 2. Home is visible within the viewport (not at edges)
-
-        // Start with a baseline position that looks at the star from an angle
-        let candidateOffset = new THREE.Vector3()
-            .addScaledVector(awayFromHome, cameraDistFromStar * 0.40)
-            .addScaledVector(perpendicular, cameraDistFromStar * 0.25)
-            .addScaledVector(new THREE.Vector3(0, 1, 0), cameraDistFromStar * 0.20);
-
-        // Test if home would be visible from this position
-        // We need to iteratively pull the camera back toward home until home is visible
-        const fovRadians = (camera.fov * Math.PI) / 180;
-        const maxIterations = 10;
-
-        for (let i = 0; i < maxIterations; i++) {
-            const testCameraPos = worldPosition.clone().add(candidateOffset);
-
-            // Vector from camera to star (should be roughly at center)
-            const cameraToStar = worldPosition.clone().sub(testCameraPos).normalize();
-
-            // Vector from camera to home
-            const cameraToHome = homePosition.clone().sub(testCameraPos).normalize();
-
-            // Calculate angle between camera-to-star and camera-to-home
-            const angleBetween = Math.acos(cameraToStar.dot(cameraToHome));
-
-            // We want home to be within 60% of the FOV radius to avoid edge placement
-            // FOV is vertical, use aspect ratio to estimate horizontal FOV
-            const aspectRatio = window.innerWidth / window.innerHeight;
-            const horizontalFov = 2 * Math.atan(Math.tan(fovRadians / 2) * aspectRatio);
-            const maxAngle = Math.min(fovRadians, horizontalFov) * 0.6; // 60% of smaller FOV dimension
-
-            if (angleBetween < maxAngle) {
-                break;
-            }
-
-            // Push camera further back (away from Earth) to ensure Earth enters the FOV
-            const pushBackVector = awayFromHome.clone().multiplyScalar(cameraDistFromStar * 0.20);
-            candidateOffset.add(pushBackVector);
+        // Stars and distant objects get an object-scale portrait. Trying to keep
+        // Earth in-frame across interstellar distances makes every target a dot;
+        // the home indicator already communicates the direction back instead.
+        const awayFromHome = worldPosition.clone();
+        if (awayFromHome.lengthSq() < 0.001) {
+            awayFromHome.set(0.35, 0.15, 1);
         }
+        awayFromHome.normalize();
 
-        offset = candidateOffset;
+        const perpendicular = new THREE.Vector3(
+            -awayFromHome.z,
+            0,
+            awayFromHome.x
+        );
+        if (perpendicular.lengthSq() < 0.001) perpendicular.set(1, 0, 0);
+        perpendicular.normalize();
+
+        // Finish on the home-facing side so the direct approach cannot pass
+        // through the destination object on the way to its portrait position.
+        offset = new THREE.Vector3()
+            .addScaledVector(awayFromHome, -0.8)
+            .addScaledVector(perpendicular, 0.45)
+            .addScaledVector(_animYAxis, 0.3)
+            .normalize()
+            .multiplyScalar(distance);
     }
 
     const targetCameraPosition = worldPosition.clone().add(offset);
@@ -2947,16 +3152,31 @@ function focusOnBody(name) {
         });
     }
 
-    flyToAnimation = {
-        startPos: startPos,
-        startTarget: startTarget,
-        endPos: targetCameraPosition,
-        endTarget: worldPosition.clone(),
-        offset: targetCameraPosition.clone().sub(worldPosition),
-        startTime: Date.now(),
-        duration: duration,
-        bodyName: name
-    };
+    const isInterstellarFlight = body.isDistant
+        && travelDistance > Math.max(distance * 4, 50000);
+    const isHomewardInterstellarFlight = !body.isDistant
+        && travelDistance > 50000;
+
+    flyToAnimation = isInterstellarFlight || isHomewardInterstellarFlight
+        ? createInterstellarFlight(
+            targetCameraPosition,
+            worldPosition,
+            name,
+            {
+                duration: isHomewardInterstellarFlight ? 5400 : duration,
+                isReturn: isHomewardInterstellarFlight
+            }
+        )
+        : {
+            startPos: startPos,
+            startTarget: startTarget,
+            endPos: targetCameraPosition,
+            endTarget: worldPosition.clone(),
+            offset: targetCameraPosition.clone().sub(worldPosition),
+            startTime: Date.now(),
+            duration: duration,
+            bodyName: name
+        };
 
     // Adjust control sensitivity based on object size and distance
     // For massive stars, reduce rotation and pan speed for smoother control
@@ -3010,15 +3230,14 @@ function stepSizeComparison(direction) {
     // If mid-animation, step from the current destination (bodyName), not
     // currentFocusedBody, so the next target is always one step further.
     const baseName = flyToAnimation ? flyToAnimation.bodyName : currentFocusedBody;
-    let currentIndex = sizeComparison.findIndex(item => item.name === baseName);
+    let currentIndex = sizeComparisonCatalog.findIndex(item => item.name === baseName);
     if (currentIndex === -1) currentIndex = 0;
 
     const nextIndex = currentIndex + direction;
-    if (nextIndex >= 0 && nextIndex < sizeComparison.length) {
-        // Capture how far the previous animation had progressed so the new
-        // one can start at equivalent speed rather than from a dead stop.
-        flyToAnimation = null;
-        focusOnSizeComparisonObject(sizeComparison[nextIndex].name);
+    if (nextIndex >= 0 && nextIndex < sizeComparisonCatalog.length) {
+        // The focus function inherits an in-progress transition's current
+        // velocity before replacing its destination.
+        focusOnSizeComparisonObject(sizeComparisonCatalog[nextIndex].name);
     }
 }
 
@@ -3134,6 +3353,58 @@ function updateZoomLevel() {
     });
 }
 
+function findNearestBodyOnScreen(clientX, clientY, bodyMap, radiusPx) {
+    const projected = new THREE.Vector3();
+    const radiusSq = radiusPx * radiusPx;
+    let nearestName = null;
+    let nearestDistanceSq = radiusSq;
+
+    bodyMap.forEach((body, name) => {
+        if (!body.mesh.visible) return;
+
+        // A child can be locally visible while an ancestor system is hidden.
+        let ancestor = body.mesh.parent;
+        while (ancestor) {
+            if (!ancestor.visible) return;
+            ancestor = ancestor.parent;
+        }
+
+        body.mesh.getWorldPosition(projected);
+        projected.project(camera);
+        if (projected.z < -1 || projected.z > 1) return;
+
+        const screenX = (projected.x * 0.5 + 0.5) * window.innerWidth;
+        const screenY = (-projected.y * 0.5 + 0.5) * window.innerHeight;
+        const dx = clientX - screenX;
+        const dy = clientY - screenY;
+        const distanceSq = dx * dx + dy * dy;
+
+        if (distanceSq <= nearestDistanceSq) {
+            nearestDistanceSq = distanceSq;
+            nearestName = name;
+        }
+    });
+
+    return nearestName;
+}
+
+function getBodyNameFromIntersection(intersection) {
+    let current = intersection && intersection.object;
+    while (current) {
+        if (current.userData && current.userData.name) {
+            return current.userData.name;
+        }
+        current = current.parent;
+    }
+    return null;
+}
+
+function isCoarsePointerEvent(event) {
+    return COARSE_POINTER_MQ.matches
+        || event.pointerType === 'touch'
+        || event.pointerType === 'pen';
+}
+
 function onClick(event) {
 
     const mouse = new THREE.Vector2();
@@ -3164,28 +3435,32 @@ function onClick(event) {
 
     const intersects = raycaster.intersectObjects(visibleMeshes, true);
 
-    if (intersects.length > 0) {
-        let target = intersects[0].object;
-        
-        // Find the body name from the mesh or its parent
-        let bodyName = null;
-        let current = target;
-        
-        while (current && !bodyName) {
-            if (current.userData && current.userData.name) {
-                bodyName = current.userData.name;
-            }
-            current = current.parent;
-        }
+    let bodyName = intersects.length > 0
+        ? getBodyNameFromIntersection(intersects[0])
+        : null;
 
-        if (bodyName) {
-            if (viewMode === 'sizeCompare') {
-                focusOnSizeComparisonObject(bodyName);
-            } else {
-                focusOnBody(bodyName);
-            }
-            return; // Focus target found and set, stop click processing
+    // Geometry can be sub-pixel at stellar distances. Use a screen-space target
+    // as a fallback for every pointer, with a finger-sized radius on touch.
+    if (!bodyName) {
+        const bodies = viewMode === 'sizeCompare' ? sizeComparisonObjects : celestialBodies;
+        const hitRadius = isCoarsePointerEvent(event)
+            ? TOUCH_BODY_HIT_RADIUS_PX
+            : MOUSE_BODY_HIT_RADIUS_PX;
+        bodyName = findNearestBodyOnScreen(
+            event.clientX,
+            event.clientY,
+            bodies,
+            hitRadius
+        );
+    }
+
+    if (bodyName) {
+        if (viewMode === 'sizeCompare') {
+            focusOnSizeComparisonObject(bodyName);
+        } else {
+            focusOnBody(bodyName);
         }
+        return;
     }
 
     // Only check for orbit line clicks (focus on the body) as a fallback if no actual body mesh was clicked
@@ -3239,6 +3514,12 @@ function showBodyInfo(data) {
         }
     }
 
+    const exoplanetHostName = data.hostName
+        || mappedExoplanetHostsByName.get(data.name);
+    const exoplanetHostData = exoplanetHostName
+        ? nearbyStars.find(host => host.name === exoplanetHostName)
+        : null;
+
     const panel = document.getElementById('body-info');
     const nameEl = document.getElementById('body-name');
     const detailsEl = document.getElementById('body-details');
@@ -3288,7 +3569,15 @@ function showBodyInfo(data) {
     if (data.orbitalPeriod) {
         html += `<div class="detail-row"><span class="detail-label">Orbital Period:</span><span class="detail-value">${data.orbitalPeriod.toLocaleString()} days</span></div>`;
     }
-    if (data.distance) {
+    if (data.distance && exoplanetHostData) {
+        const distanceFromEarth = formatDistance(exoplanetHostData.distance, false);
+        const orbitalDistanceAu = data.distance / AU_IN_KM;
+        const orbitalDistance = `${orbitalDistanceAu.toFixed(
+            orbitalDistanceAu < 1 ? 4 : 2
+        )} AU (${formatDistance(data.distance, true)})`;
+        html += `<div class="detail-row"><span class="detail-label">Distance from Earth:</span><span class="detail-value">${distanceFromEarth}</span></div>`;
+        html += `<div class="detail-row"><span class="detail-label">Orbital distance:</span><span class="detail-value">${orbitalDistance}</span></div>`;
+    } else if (data.distance) {
         const actualDist = getCurrentDistanceToEarth(data);
         const isSolarSys = !['star', 'blackhole', 'galaxy', 'nebula', 'cluster'].includes(data.type);
         const distText = formatDistance(actualDist, isSolarSys);
@@ -3376,7 +3665,9 @@ function showBodyInfo(data) {
     // 4. Travel times
     if (data.distance && data.name !== 'Sun' && data.name !== 'Solar System') {
         hasFacts = true;
-        const actualDist = getCurrentDistanceToEarth(data);
+        const actualDist = exoplanetHostData
+            ? exoplanetHostData.distance
+            : getCurrentDistanceToEarth(data);
         // Light travel time
         const lightSeconds = actualDist / 299792.458;
         let timeText = "";
@@ -3393,7 +3684,12 @@ function showBodyInfo(data) {
         }
         
         let originText;
-        if (data.type === 'star' || data.type === 'galaxy' || data.type === 'nebula' || data.type === 'cluster' || data.type === 'blackhole') {
+        if (exoplanetHostData
+            || data.type === 'star'
+            || data.type === 'galaxy'
+            || data.type === 'nebula'
+            || data.type === 'cluster'
+            || data.type === 'blackhole') {
             originText = "Earth";
         } else if (data.type === 'moon') {
             originText = "its host planet";
@@ -3793,7 +4089,10 @@ function capitalize(str) {
 }
 
 function onMouseDown(event) {
-    if (event.target.closest('#ui-container')) return;
+    activeTapPointerId = null;
+    if (event.target.closest('#ui-container') || event.isPrimary === false) return;
+
+    activeTapPointerId = event.pointerId;
     mouseDownPos.x = event.clientX;
     mouseDownPos.y = event.clientY;
     isDragging = false;
@@ -3814,15 +4113,24 @@ function onMouseDown(event) {
 }
 
 function onMouseUp(event) {
+    if (event.pointerId !== activeTapPointerId) return;
+    activeTapPointerId = null;
     if (event.target.closest('#ui-container')) return;
     
     const dx = event.clientX - mouseDownPos.x;
     const dy = event.clientY - mouseDownPos.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
-    // If mouse moved less than 5 pixels, treat it as a click
-    if (distance < 5) {
+    // Allow normal finger jitter without turning deliberate drags into taps.
+    const tapTolerance = isCoarsePointerEvent(event) ? TOUCH_TAP_MOVE_TOLERANCE_PX : 5;
+    if (distance < tapTolerance) {
         onClick(event);
+    }
+}
+
+function onPointerCancel(event) {
+    if (event.pointerId === activeTapPointerId) {
+        activeTapPointerId = null;
     }
 }
 
@@ -3871,6 +4179,16 @@ function updateHoverState(clientX, clientY) {
     }
 
     const intersects = raycaster.intersectObjects(visibleMeshes, true);
+    const bodies = viewMode === 'sizeCompare' ? sizeComparisonObjects : celestialBodies;
+    const exactBodyName = intersects.length > 0
+        ? getBodyNameFromIntersection(intersects[0])
+        : null;
+    const nearbyBodyName = exactBodyName || findNearestBodyOnScreen(
+        clientX,
+        clientY,
+        bodies,
+        MOUSE_BODY_HIT_RADIUS_PX
+    );
     
     // Also check for orbit line intersections (using hit targets)
     const hitTargets = Array.from(orbitLines.values()).map(obj => obj.hitTarget);
@@ -3882,32 +4200,17 @@ function updateHoverState(clientX, clientY) {
         constellationIntersects = raycaster.intersectObjects(constellationSprites);
     }
 
-    if (intersects.length > 0) {
-        let target = intersects[0].object;
-        
-        // Find the body name from the mesh or its parent
-        let bodyName = null;
-        let current = target;
-        
-        while (current && !bodyName) {
-            if (current.userData && current.userData.name) {
-                bodyName = current.userData.name;
-            }
-            current = current.parent;
-        }
-
-        if (bodyName) {
-            const body = viewMode === 'sizeCompare' 
-                ? sizeComparisonObjects.get(bodyName)
-                : celestialBodies.get(bodyName);
-            if (body && body !== hoveredBody) {
-                hoveredBody = body;
-                hoveredOrbit = null;
-                hoveredConstellation = null;
-                showTooltip(body.data, clientX, clientY);
-            } else if (body) {
-                updateTooltipPosition(clientX, clientY);
-            }
+    if (nearbyBodyName) {
+        const body = viewMode === 'sizeCompare'
+            ? sizeComparisonObjects.get(nearbyBodyName)
+            : celestialBodies.get(nearbyBodyName);
+        if (body && body !== hoveredBody) {
+            hoveredBody = body;
+            hoveredOrbit = null;
+            hoveredConstellation = null;
+            showTooltip(body.data, clientX, clientY);
+        } else if (body) {
+            updateTooltipPosition(clientX, clientY);
         }
     } else if (orbitIntersects.length > 0 && viewMode !== 'sizeCompare') {
         // Hovering over an orbit line (only in map mode)
@@ -4613,6 +4916,9 @@ function focusSizeComparisonStart() {
     if (flyToAnimation) {
         camera.position.copy(flyToAnimation.endPos);
         controls.target.copy(flyToAnimation.endTarget);
+        if (flyToAnimation.endMinDistance !== undefined) {
+            controls.minDistance = flyToAnimation.endMinDistance;
+        }
         controls.update();
         flyToAnimation = null;
     }
@@ -4635,7 +4941,7 @@ function createSizeComparisonView() {
     // Track added names to prevent duplicates
     const addedNames = new Set();
 
-    sizeComparison.forEach((data, index) => {
+    sizeComparisonCatalog.forEach((data, index) => {
         // Skip if we already added an object with this name
         if (addedNames.has(data.name)) return;
         addedNames.add(data.name);
@@ -4723,9 +5029,12 @@ function createSizeComparisonView() {
         currentX = positionX + nextSpacing;
     });
     
-    // Center the group
-    const totalWidth = currentX;
-    sizeComparisonGroup.position.x = -totalWidth / 2;
+    // Keep the small end of the lineup near the scene origin. Centering the
+    // complete lineup (including hundred-million-unit black holes) pushed the
+    // planets and ordinary stars to roughly -424 million units, where float32
+    // GPU coordinates quantized otherwise-smooth camera moves into visible
+    // jumps. Giant objects remain precise because their own scale is enormous.
+    sizeComparisonGroup.position.x = 0;
     
     // Add to scene
     scene.add(sizeComparisonGroup);
@@ -4735,10 +5044,8 @@ function createSizeComparisonView() {
     // Instead, start at the BEGINNING (Earth) so the user can scroll/pan right.
     // Place camera near Earth but back enough to see the first few objects.
     
-    // Earth is at index 0. Let's find its position in the group.
-    // The group is centered at x=0, so Earth (at relative 0ish) is at -totalWidth/2.
-    // Actually, Earth is at x = sizeComparisonObjects.get('Earth').mesh.position.x
-    // World X = GroupX + LocalX = (-totalWidth/2) + LocalX.
+    // All focus and navigation calculations use each mesh's world position, so
+    // anchoring instead of centering does not change lineup behavior.
     
     focusSizeComparisonStart();
     
@@ -4851,6 +5158,19 @@ function updateStarMeshEffects(starMesh, time) {
     starMesh.getWorldPosition(_animWorldPosition);
     
     const dist = camera.position.distanceTo(_animWorldPosition);
+
+    // The physical sprite scale used to make distant interactive stars collapse
+    // down to the same few pixels as the non-clickable sky. Expand only the
+    // existing glint enough to hold a small screen-space footprint. Larger and
+    // nearby stars keep their normal scale, and the close-range fade below still
+    // removes the photographic glare when the viewer approaches the surface.
+    let minimumGlintScale = 0;
+    if (viewMode === 'map' && camera.isPerspectiveCamera) {
+        const viewportHeight = Math.max(window.innerHeight, 1);
+        const projectionScale = camera.projectionMatrix.elements[5];
+        minimumGlintScale = (MIN_INTERACTIVE_STAR_GLINT_PX * 2 * dist)
+            / (viewportHeight * projectionScale);
+    }
     
     // Smooth transition from 7.5x radius down to 2.5x radius
     const fadeStart = visualRadius * 7.5;
@@ -4865,6 +5185,8 @@ function updateStarMeshEffects(starMesh, time) {
     
     starMesh.children.forEach(child => {
         if (child.name === 'starSpike' && child.material) {
+            const baseScale = child.userData.baseScale || visualRadius * 5;
+            child.scale.setScalar(Math.max(baseScale, minimumGlintScale));
             child.material.opacity = fadeFactor;
             child.visible = fadeFactor > 0.001;
         } else if (child.name === 'starGlow3' && child.material) {
@@ -5142,10 +5464,292 @@ function toggleCategorySortMode(categoryName) {
     populateObjectList();
 }
 
+function setupTravelStreaks() {
+    travelStreakCanvas = document.getElementById('travel-streaks');
+    if (!travelStreakCanvas) return;
+    travelStreakContext = travelStreakCanvas.getContext('2d');
+    resizeTravelStreaks();
+}
+
+function setupStellarComparison() {
+    stellarComparisonOverlay = document.getElementById('stellar-comparison');
+    const sunElement = document.getElementById('sun-hologram');
+    const earthElement = document.getElementById('earth-hologram');
+    if (!stellarComparisonOverlay || !sunElement || !earthElement) return;
+
+    sunHologram = {
+        element: sunElement,
+        ratioLabel: sunElement.querySelector('.hologram-ratio')
+    };
+    earthHologram = {
+        element: earthElement,
+        ratioLabel: earthElement.querySelector('.hologram-ratio')
+    };
+}
+
+function formatHologramRatio(ratio) {
+    if (ratio >= 1000) return `${Math.round(ratio).toLocaleString()}× target`;
+    if (ratio >= 10) return `${ratio.toFixed(1)}× target`;
+    if (ratio >= 1) return `${ratio.toFixed(2)}× target`;
+
+    const inverse = 1 / Math.max(ratio, Number.EPSILON);
+    if (inverse >= 1000) return `1 / ${Math.round(inverse).toLocaleString()} target`;
+    if (inverse >= 10) return `1 / ${inverse.toFixed(1)} target`;
+    return `${ratio.toFixed(2)}× target`;
+}
+
+function layoutStellarHologram(hologram, x, y, trueCoreDiameter, maxCoreDiameter, ratio) {
+    const coreDiameter = THREE.MathUtils.clamp(trueCoreDiameter, 1, maxCoreDiameter);
+    const markerDiameter = Math.max(44, coreDiameter + 14);
+    const halfMarker = markerDiameter * 0.5;
+    const horizontalMargin = halfMarker + 10;
+    const verticalTopMargin = halfMarker + 10;
+    const verticalBottomMargin = halfMarker + 58;
+
+    hologram.element.style.setProperty('--core-size', `${coreDiameter.toFixed(2)}px`);
+    hologram.element.style.setProperty('--marker-size', `${markerDiameter.toFixed(2)}px`);
+    hologram.element.style.left = `${THREE.MathUtils.clamp(
+        x,
+        horizontalMargin,
+        window.innerWidth - horizontalMargin
+    ).toFixed(1)}px`;
+    hologram.element.style.top = `${THREE.MathUtils.clamp(
+        y,
+        verticalTopMargin,
+        window.innerHeight - verticalBottomMargin
+    ).toFixed(1)}px`;
+    hologram.ratioLabel.textContent = formatHologramRatio(ratio);
+
+    return markerDiameter;
+}
+
+function updateStellarComparison(frameScale) {
+    if (!stellarComparisonOverlay || !sunHologram || !earthHologram) return;
+
+    let desiredOpacity = 0;
+    let comparisonBody = null;
+    if (viewMode === 'map' && !flyToAnimation && currentFocusedBody) {
+        const focused = celestialBodies.get(currentFocusedBody);
+        const isAnotherStar = focused
+            && focused.isDistant
+            && focused.data
+            && focused.data.type === 'star'
+            && focused.data.name !== 'Sun'
+            && Number.isFinite(focused.data.radius)
+            && focused.data.radius > 0;
+        if (isAnotherStar) comparisonBody = focused;
+    }
+
+    if (comparisonBody) {
+        const visualMesh = comparisonBody.visualMesh || comparisonBody.mesh;
+        const visualRadius = visualMesh.userData.visualRadius
+            || visualMesh.geometry?.parameters?.radius
+            || 0;
+        comparisonBody.mesh.getWorldPosition(_animWorldPosition);
+        _comparisonDirection.copy(_animWorldPosition).sub(camera.position);
+        const cameraDistance = _comparisonDirection.length();
+
+        if (visualRadius > 0 && cameraDistance > visualRadius) {
+            _comparisonDirection.normalize();
+            camera.getWorldDirection(_comparisonCameraForward);
+            const alignment = _comparisonCameraForward.dot(_comparisonDirection);
+            const distanceInRadii = cameraDistance / visualRadius;
+            const proximityFade = 1 - THREE.MathUtils.smoothstep(
+                distanceInRadii,
+                7.5,
+                12
+            );
+            const alignmentFade = THREE.MathUtils.smoothstep(
+                alignment,
+                Math.cos(THREE.MathUtils.degToRad(18)),
+                Math.cos(THREE.MathUtils.degToRad(5))
+            );
+            desiredOpacity = proximityFade * alignmentFade;
+
+            if (desiredOpacity > 0.001) {
+                _comparisonProjectedPosition.copy(_animWorldPosition).project(camera);
+                const targetX = (_comparisonProjectedPosition.x * 0.5 + 0.5)
+                    * window.innerWidth;
+                const targetY = (-_comparisonProjectedPosition.y * 0.5 + 0.5)
+                    * window.innerHeight;
+                const focalLengthPixels = window.innerHeight
+                    / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5));
+                const angularRadius = Math.asin(THREE.MathUtils.clamp(
+                    visualRadius / cameraDistance,
+                    0,
+                    0.99
+                ));
+                const targetRadiusPixels = Math.tan(angularRadius) * focalLengthPixels;
+                const sunRatio = SUN_REFERENCE_RADIUS_KM / comparisonBody.data.radius;
+                const earthRatio = EARTH_REFERENCE_RADIUS_KM / comparisonBody.data.radius;
+                const maxCoreDiameter = Math.min(
+                    window.innerWidth * 0.25,
+                    window.innerHeight * 0.34,
+                    260
+                );
+                const sunCoreDiameter = targetRadiusPixels * 2 * sunRatio;
+                const earthCoreDiameter = targetRadiusPixels * 2 * earthRatio;
+                const estimatedSunMarker = Math.max(
+                    44,
+                    Math.min(sunCoreDiameter, maxCoreDiameter) + 14
+                );
+                const estimatedEarthMarker = Math.max(
+                    44,
+                    Math.min(earthCoreDiameter, maxCoreDiameter) + 14
+                );
+                // Giant stars need substantially more clearance because their
+                // visible corona extends far beyond the solid sphere. Use the
+                // Sun-to-target ratio to widen that gap aggressively, while
+                // retaining a modestly larger baseline for ordinary stars.
+                const giantStarSpacing = 1 - THREE.MathUtils.smoothstep(
+                    sunRatio,
+                    0.002,
+                    0.08
+                );
+                const clearanceFactor = THREE.MathUtils.lerp(
+                    0.45,
+                    1.05,
+                    giantStarSpacing
+                );
+                const comparisonClearance = THREE.MathUtils.clamp(
+                    targetRadiusPixels * clearanceFactor,
+                    64,
+                    Math.min(240, window.innerWidth * 0.28)
+                );
+                const sunGap = targetRadiusPixels
+                    + estimatedSunMarker * 0.5
+                    + comparisonClearance;
+                const earthGap = targetRadiusPixels
+                    + estimatedEarthMarker * 0.5
+                    + comparisonClearance;
+
+                layoutStellarHologram(
+                    sunHologram,
+                    targetX - sunGap,
+                    targetY,
+                    sunCoreDiameter,
+                    maxCoreDiameter,
+                    sunRatio
+                );
+                layoutStellarHologram(
+                    earthHologram,
+                    targetX + earthGap,
+                    targetY,
+                    earthCoreDiameter,
+                    maxCoreDiameter,
+                    earthRatio
+                );
+            }
+        }
+    }
+
+    const fadeBlend = REDUCED_MOTION_MQ.matches
+        ? 1
+        : 1 - Math.exp(-Math.max(frameScale, 0.01) * 0.12);
+    stellarComparisonOpacity = THREE.MathUtils.lerp(
+        stellarComparisonOpacity,
+        desiredOpacity,
+        fadeBlend
+    );
+    if (stellarComparisonOpacity < 0.001) stellarComparisonOpacity = 0;
+    stellarComparisonOverlay.style.opacity = stellarComparisonOpacity.toFixed(3);
+    stellarComparisonOverlay.setAttribute(
+        'aria-hidden',
+        stellarComparisonOpacity > 0.01 ? 'false' : 'true'
+    );
+}
+
+function resizeTravelStreaks() {
+    if (!travelStreakCanvas || !travelStreakContext) return;
+
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    travelStreakCanvas.width = Math.round(window.innerWidth * pixelRatio);
+    travelStreakCanvas.height = Math.round(window.innerHeight * pixelRatio);
+    travelStreakContext.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+
+    const maxRadius = Math.hypot(window.innerWidth, window.innerHeight) * 0.55;
+    const particleCount = COARSE_POINTER_MQ.matches ? 65 : 110;
+    travelStreakParticles = Array.from({ length: particleCount }, () => ({
+        angle: Math.random() * Math.PI * 2,
+        radius: Math.pow(Math.random(), 1.6) * maxRadius,
+        speed: 2.2 + Math.random() * 5.2,
+        alpha: 0.22 + Math.random() * 0.58,
+        blue: Math.random() > 0.38
+    }));
+}
+
+function updateTravelStreaks(animation, frameScale) {
+    if (!travelStreakContext || !travelStreakCanvas) return;
+
+    const shouldDraw = animation
+        && animation.isInterstellarFlight
+        && !REDUCED_MOTION_MQ.matches;
+
+    if (!shouldDraw) {
+        if (travelStreaksWereVisible) {
+            travelStreakContext.clearRect(0, 0, window.innerWidth, window.innerHeight);
+            travelStreaksWereVisible = false;
+        }
+        return;
+    }
+
+    const progress = THREE.MathUtils.clamp(
+        (Date.now() - animation.startTime) / animation.duration,
+        0,
+        1
+    );
+    // Let the first streaks appear near the end of the pullback/turn, then keep
+    // them through more of the direct flight. They still finish comfortably
+    // before the destination settles at roughly 92-94% progress.
+    const fadeIn = THREE.MathUtils.smoothstep(progress, 0.12, 0.25);
+    const fadeOut = 1 - THREE.MathUtils.smoothstep(progress, 0.62, 0.74);
+    const intensity = Math.min(fadeIn, fadeOut);
+
+    const ctx = travelStreakContext;
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const centerX = width * 0.5;
+    const centerY = height * 0.5;
+    const maxRadius = Math.hypot(width, height) * 0.55;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+
+    travelStreakParticles.forEach((particle) => {
+        particle.radius += particle.speed * (0.55 + intensity * 2.8) * frameScale;
+        if (particle.radius > maxRadius) {
+            particle.radius = Math.random() * maxRadius * 0.06;
+            particle.angle = Math.random() * Math.PI * 2;
+        }
+
+        const tailLength = 2 + particle.radius * 0.085 * intensity;
+        const tailRadius = Math.max(0, particle.radius - tailLength);
+        const cos = Math.cos(particle.angle);
+        const sin = Math.sin(particle.angle);
+        const alpha = particle.alpha * intensity
+            * Math.min(1, particle.radius / (maxRadius * 0.16));
+
+        ctx.beginPath();
+        ctx.moveTo(centerX + cos * tailRadius, centerY + sin * tailRadius);
+        ctx.lineTo(centerX + cos * particle.radius, centerY + sin * particle.radius);
+        ctx.lineWidth = 0.6 + intensity * 1.25;
+        ctx.strokeStyle = particle.blue
+            ? `rgba(135, 195, 255, ${alpha})`
+            : `rgba(255, 255, 255, ${alpha * 0.9})`;
+        ctx.stroke();
+    });
+
+    ctx.restore();
+    travelStreaksWereVisible = true;
+}
+
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    resizeTravelStreaks();
 }
 
 function formatDistance(distance, isSolarSystem = false) {
@@ -5238,32 +5842,38 @@ function populateSizeComparisonList(listContainer) {
     let html = '';
     
     // Find max radius for relative sizing
-    const maxRadius = Math.max(...sizeComparison.map(obj => obj.radius || 0));
+    const maxRadius = Math.max(...sizeComparisonCatalog.map(obj => obj.radius || 0));
     
     html += `
         <div class="object-category">
             <div class="category-header">
                 <span class="category-name">Size Comparison</span>
-                <span class="category-count">${sizeComparison.length} objects</span>
+                <span class="category-count">${sizeComparisonCatalog.length} objects</span>
             </div>
             <div class="category-items">
     `;
     
-    sizeComparison.forEach(data => {
+    sizeComparisonCatalog.forEach(data => {
         const radius = data.radius || 0;
         const relativeSize = maxRadius > 0 ? (radius / maxRadius) * 100 : 50;
         
         // Find distance from celestialBodies map if available
-        let distText = 'Dist: -';
+        let distText = 'From Earth: -';
         const mainBody = celestialBodies.get(data.name);
-        if (mainBody && mainBody.data && mainBody.data.distance) {
+        const hostBody = data.type === 'exoplanet' && data.hostName
+            ? celestialBodies.get(data.hostName)
+            : null;
+        if (hostBody && hostBody.data && hostBody.data.distance) {
+             const actualDist = getCurrentDistanceToEarth(hostBody.data);
+             distText = 'From Earth: ' + formatDistance(actualDist, false);
+        } else if (mainBody && mainBody.data && mainBody.data.distance) {
              const actualDist = getCurrentDistanceToEarth(mainBody.data);
              const isSolarSystem = !mainBody.isDistant && mainBody.data.type !== 'star' && mainBody.data.type !== 'blackhole' && mainBody.data.type !== 'galaxy' && mainBody.data.type !== 'cluster' && mainBody.data.type !== 'nebula';
-             distText = 'Dist: ' + formatDistance(actualDist, isSolarSystem);
+             distText = 'From Earth: ' + formatDistance(actualDist, isSolarSystem);
         } else if (data.name === 'Earth') {
-             distText = 'Dist: 0.0 AU';
+             distText = 'From Earth: 0 km';
         } else if (data.name === 'Sun') {
-             distText = 'Dist: 1.0 AU';
+             distText = 'From Earth: 1.0 AU';
         }
 
         // Format diameter ("Width") for display
@@ -5337,9 +5947,61 @@ function updateSidebarSelection(name) {
     });
 }
 
+function getSizeComparisonMotion(animation, now = Date.now()) {
+    if (!animation || !animation.isSizeCompare) return null;
+
+    const p = THREE.MathUtils.clamp(
+        (now - animation.startTime) / animation.duration,
+        0,
+        1
+    );
+    const p2 = p * p;
+    const dh00 = 6 * p2 - 6 * p;
+    const dh10 = 3 * p2 - 4 * p + 1;
+    const dh01 = -dh00;
+    const durationSeconds = animation.duration / 1000;
+
+    const calculateVelocity = (start, end, startVelocity) => new THREE.Vector3(
+        (dh00 * start.x
+            + dh10 * durationSeconds * startVelocity.x
+            + dh01 * end.x) / durationSeconds,
+        (dh00 * start.y
+            + dh10 * durationSeconds * startVelocity.y
+            + dh01 * end.y) / durationSeconds,
+        (dh00 * start.z
+            + dh10 * durationSeconds * startVelocity.z
+            + dh01 * end.z) / durationSeconds
+    );
+
+    return {
+        cameraVelocity: calculateVelocity(
+            animation.startPos,
+            animation.endPos,
+            animation.startVelocity
+        ),
+        targetVelocity: calculateVelocity(
+            animation.startTarget,
+            animation.endTarget,
+            animation.startTargetVelocity
+        )
+    };
+}
+
+function limitSizeComparisonVelocity(velocity, start, end, duration) {
+    const limited = velocity ? velocity.clone() : new THREE.Vector3();
+    const distance = start.distanceTo(end);
+    const maxSpeed = distance > 0
+        ? (distance / Math.max(duration / 1000, 0.001)) * 1.75
+        : 0;
+    if (limited.length() > maxSpeed) limited.setLength(maxSpeed);
+    return limited;
+}
+
 function focusOnSizeComparisonObject(name) {
     const body = sizeComparisonObjects.get(name);
     if (!body || !body.mesh) return;
+
+    const inheritedMotion = getSizeComparisonMotion(flyToAnimation);
     
     currentFocusedBody = name;
     updateSidebarSelection(name);
@@ -5353,9 +6015,11 @@ function focusOnSizeComparisonObject(name) {
     // and pushing the camera way too far out.
     const visualRadius = body.data.radius ? (body.data.radius / 2000) : 1.0;
 
-    // Adaptive zoom floor here too, so a prior huge-star focus (large
-    // minDistance) doesn't lock zooming in comparison view
-    controls.minDistance = Math.max(visualRadius * 1.2, 0.25);
+    // Lower floors can be adopted immediately. A larger destination floor must
+    // wait until arrival; applying it now makes OrbitControls shove the camera
+    // outward once before the smooth transition begins.
+    const targetMinDistance = Math.max(visualRadius * 1.2, 0.25);
+    controls.minDistance = Math.min(controls.minDistance, targetMinDistance);
 
     // Calculate camera distance - make it dynamic but relative
     // We want to see the "next" star, so we look slightly to the right (+X)
@@ -5369,13 +6033,10 @@ function focusOnSizeComparisonObject(name) {
     // Angled slightly to show next star:
     // Move slightly left (-X) of the object center, so we look right (+X) towards the lineup
     
-    // ADJUST INITIAL ZOOM HERE
+    // Keep neighboring objects on one continuous radius-based framing curve.
     let zoomFactor = 1.0;
-    
-    // Earth is tiny in comparison view, zoom out a lot more to show context/pointer
-    if (name === 'Earth') {
-        zoomFactor = 3.0;
-    } else if (visualRadius > 1000000) { 
+
+    if (visualRadius > 1000000) {
         // For incredibly massive objects (like supermassive black holes > 2 billion km),
         // pull the camera in relatively closer. This prevents pulling so far back that 
         // the lineup becomes horizontal, and emphasizes their staggering scale.
@@ -5473,11 +6134,24 @@ function focusOnSizeComparisonObject(name) {
 
     const startPos = camera.position.clone();
     const startTarget = controls.target.clone();
+    const startVelocity = limitSizeComparisonVelocity(
+        inheritedMotion?.cameraVelocity,
+        startPos,
+        targetCameraPosition,
+        calculatedDuration
+    );
+    const startTargetVelocity = limitSizeComparisonVelocity(
+        inheritedMotion?.targetVelocity,
+        startTarget,
+        lookAtTarget,
+        calculatedDuration
+    );
 
     // Skip animation if we're already practically at the destination
     if (startPos.distanceTo(targetCameraPosition) < 0.1 && startTarget.distanceTo(lookAtTarget) < 0.1) {
         camera.position.copy(targetCameraPosition);
         controls.target.copy(lookAtTarget);
+        controls.minDistance = targetMinDistance;
         controls.update();
         
         // Update URL with target
@@ -5497,6 +6171,9 @@ function focusOnSizeComparisonObject(name) {
         duration: calculatedDuration,
         bodyName: name,
         isSizeCompare: true,
+        startVelocity,
+        startTargetVelocity,
+        endMinDistance: targetMinDistance
     };
     
     // Update URL with target
@@ -5520,8 +6197,22 @@ function populateObjectList() {
 
     const categories = {
         'Solar System': [],
+        'Exoplanets': [],
         'Stars': [],
         'Black Holes': []
+    };
+
+    // Exoplanet data stores orbital separation in `distance`; the object list's
+    // distance column is Earth-centric, so use the host system's distance.
+    const getListDistance = (body) => {
+        if (body.type === 'exoplanet' && body.parent) {
+            for (const host of celestialBodies.values()) {
+                if (host.mesh === body.parent) {
+                    return host.data.distance ? getCurrentDistanceToEarth(host.data) : 0;
+                }
+            }
+        }
+        return body.data.distance ? getCurrentDistanceToEarth(body.data) : 0;
     };
 
     // Sort objects into categories, separating planets/stars from moons
@@ -5558,6 +6249,8 @@ function populateObjectList() {
             planets.push({ name, body });
         } else if (type === 'blackhole') {
             categories['Black Holes'].push({ name, body });
+        } else if (type === 'exoplanet') {
+            categories['Exoplanets'].push({ name, body });
         } else if (type === 'star' || type === 'neutronstar') {
             categories['Stars'].push({ name, body });
         }
@@ -5575,8 +6268,8 @@ function populateObjectList() {
             });
         } else if (mode === 'distance') {
             array.sort((a, b) => {
-                const distA = a.body.data.distance || 0;
-                const distB = b.body.data.distance || 0;
+                const distA = getListDistance(a.body);
+                const distB = getListDistance(b.body);
                 return distA - distB; // Closest first
             });
         }
@@ -5640,7 +6333,7 @@ function populateObjectList() {
             }
 
             // Calculate distance from Earth dynamically
-            let actualDist = body.data.distance ? getCurrentDistanceToEarth(body.data) : 0;
+            const actualDist = getListDistance(body);
 
             const isSolarSystem = !body.isDistant;
             const distance = actualDist ? formatDistance(actualDist, isSolarSystem) : '-';
@@ -5744,17 +6437,10 @@ function smoothPanToBody(name) {
              return;
         }
 
-        // Also cancel any existing fly animation to avoid fighting
+        // Existing comparison flights are retargeted with their current
+        // velocity, avoiding a stop/restart jolt.
         if (flyToAnimation) {
-             // If we are already flying to this object, let it continue
-             if (flyToAnimation.bodyName === name) return;
-             
-             // Otherwise, stop previous animation so we can start new one from CURRENT position
-             // We DO NOT set it to null here, because focusOnSizeComparisonObject creates a new one
-             // and overwrites it. If we set it to null, we might lose state or cause a frame skip.
-             // But focusOnSizeComparisonObject reads camera.position.
-             // Since camera.position is updated every frame in animate(), it is safe.
-             flyToAnimation = null;
+            if (flyToAnimation.bodyName === name) return;
         }
         
         focusOnSizeComparisonObject(name);
@@ -5841,7 +6527,66 @@ function toggleCategory(header) {
     }
 }
 
-function flyToEarth() {
+function createInterstellarFlight(
+    endPos,
+    endTarget,
+    bodyName,
+    { duration = 4000, isReturn = false } = {}
+) {
+    const startPos = camera.position.clone();
+    const startTarget = controls.target.clone();
+    const currentForward = startTarget.clone().sub(startPos);
+    if (currentForward.lengthSq() < 0.001) {
+        currentForward.copy(endTarget).sub(startPos);
+    }
+    if (currentForward.lengthSq() < 0.001) currentForward.set(0, 0, -1);
+    currentForward.normalize();
+
+    const currentViewDistance = startPos.distanceTo(startTarget);
+    const travelDistance = startPos.distanceTo(endPos);
+    const naturalPullback = Math.max(currentViewDistance * 0.45, 80);
+    const maximumPullback = Math.max(travelDistance * 0.015, 80);
+    const pullbackDistance = Math.min(naturalPullback, maximumPullback);
+    const pullbackPos = startPos.clone()
+        .addScaledVector(currentForward, -pullbackDistance);
+
+    const destinationDirection = endTarget.clone().sub(pullbackPos);
+    if (destinationDirection.lengthSq() < 0.001) {
+        destinationDirection.copy(endPos).sub(pullbackPos);
+    }
+    destinationDirection.normalize();
+
+    return {
+        startPos,
+        startTarget,
+        endPos: endPos.clone(),
+        endTarget: endTarget.clone(),
+        offset: endPos.clone().sub(endTarget),
+        startTime: Date.now(),
+        duration,
+        bodyName,
+        isInterstellarFlight: true,
+        isInterstellarReturn: isReturn,
+        travelTurn: {
+            startDirection: currentForward.clone(),
+            endDirection: destinationDirection,
+            lookDistance: Math.max(pullbackPos.distanceTo(endTarget), 300),
+            pullbackPos,
+            fraction: 0.20
+        },
+        startDistanceToTarget: Math.max(pullbackPos.distanceTo(endTarget), 0.001),
+        endDistanceToTarget: Math.max(endPos.distanceTo(endTarget), 0.001)
+    };
+}
+
+function createInterstellarReturnFlight(endPos, endTarget, bodyName) {
+    return createInterstellarFlight(endPos, endTarget, bodyName, {
+        duration: 5400,
+        isReturn: true
+    });
+}
+
+function flyToEarth(showEarthInfo = false) {
     // If in size comparison mode, switch back to map view first
     // toggleViewMode calls showMapView which calls flyToEarth, so we can just return after toggling
     if (viewMode === 'sizeCompare') {
@@ -5911,16 +6656,22 @@ function flyToEarth() {
     const startPos = camera.position.clone();
     const startTarget = controls.target.clone();
 
-    flyToAnimation = {
-        startPos: startPos,
-        startTarget: startTarget,
-        endPos: targetCameraPos,
-        endTarget: earthPosition.clone(),
-        offset: targetCameraPos.clone().sub(earthPosition),
-        startTime: Date.now(),
-        duration: duration,
-        bodyName: 'Earth (Wide View)'
-    };
+    flyToAnimation = travelDistance > 50000
+        ? createInterstellarReturnFlight(
+            targetCameraPos,
+            earthPosition,
+            'Earth (Wide View)'
+        )
+        : {
+            startPos: startPos,
+            startTarget: startTarget,
+            endPos: targetCameraPos,
+            endTarget: earthPosition.clone(),
+            offset: targetCameraPos.clone().sub(earthPosition),
+            startTime: Date.now(),
+            duration: duration,
+            bodyName: 'Earth (Wide View)'
+        };
 
     // Set focused body to Earth but don't show the info panel for home view
     currentFocusedBody = 'Earth';
@@ -5930,11 +6681,48 @@ function flyToEarth() {
     updateZoomLevel();
     updateUI();
 
-    hideBodyInfo();
+    if (showEarthInfo) {
+        showBodyInfo(earthBody.data);
+        updateSidebarSelection('Earth');
+    } else {
+        hideBodyInfo();
+    }
 }
 
 // Bump the version suffix to re-show the notice to everyone after a big change
 const BETA_NOTICE_KEY = 'betaNoticeDismissed:v1';
+const CONTROLS_INFO_VISIBLE_MS = 8000;
+
+function setupControlsInfo() {
+    const panel = document.getElementById('controls-info');
+    const showButton = document.getElementById('controls-info-button');
+    if (!panel || !showButton || isMobileLayout()) return;
+
+    let minimizeTimer = null;
+
+    function minimizeControls() {
+        panel.classList.add('minimized');
+        panel.setAttribute('aria-hidden', 'true');
+        showButton.hidden = false;
+        showButton.setAttribute('aria-expanded', 'false');
+    }
+
+    function showControls() {
+        clearTimeout(minimizeTimer);
+        panel.classList.remove('minimized');
+        panel.setAttribute('aria-hidden', 'false');
+        showButton.hidden = true;
+        showButton.setAttribute('aria-expanded', 'true');
+        minimizeTimer = setTimeout(minimizeControls, CONTROLS_INFO_VISIBLE_MS);
+    }
+
+    showButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        showControls();
+    });
+
+    showControls();
+}
 
 function setupInfoPopup() {
     const popup = document.getElementById('info-popup');
@@ -5986,6 +6774,9 @@ function setupInfoPopup() {
 // Keep in sync with the media query in css/styles.css
 const MOBILE_LAYOUT_MQ = window.matchMedia(
     '(max-width: 768px), (max-width: 950px) and (max-height: 500px) and (orientation: landscape)'
+);
+const LARGE_DESKTOP_LAYOUT_MQ = window.matchMedia(
+    '(min-width: 1500px) and (min-height: 800px)'
 );
 // Touch-only devices: hover tooltips and hover-to-pan don't apply
 const HOVER_NONE_MQ = window.matchMedia('(hover: none)');

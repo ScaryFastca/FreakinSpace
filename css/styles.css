@@ -18,7 +18,174 @@ body {
     width: 100%;
     height: 100%;
     display: block;
+    z-index: 0;
     touch-action: none; /* pinch/drag drive OrbitControls, not browser zoom/scroll */
+}
+
+#travel-streaks {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5;
+}
+
+#stellar-comparison {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.stellar-hologram {
+    --core-size: 12px;
+    --marker-size: 48px;
+    position: absolute;
+    width: var(--marker-size);
+    height: var(--marker-size);
+    transform: translate(-50%, -50%);
+    color: #63d9ff;
+    filter: drop-shadow(0 0 7px rgba(72, 198, 255, 0.72));
+    will-change: left, top;
+}
+
+.hologram-core,
+.hologram-reticle,
+.hologram-beam {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.hologram-core {
+    width: var(--core-size);
+    height: var(--core-size);
+    min-width: 1px;
+    min-height: 1px;
+    border: 1px solid rgba(179, 239, 255, 0.9);
+    border-radius: 50%;
+    overflow: hidden;
+    background:
+        repeating-linear-gradient(
+            to bottom,
+            rgba(215, 249, 255, 0.72) 0,
+            rgba(215, 249, 255, 0.72) 1px,
+            rgba(29, 155, 224, 0.22) 2px,
+            rgba(29, 155, 224, 0.05) 4px
+        ),
+        radial-gradient(circle at 36% 32%, rgba(235, 253, 255, 0.9), rgba(54, 186, 239, 0.28) 48%, rgba(0, 82, 160, 0.08) 72%);
+    box-shadow:
+        0 0 5px rgba(158, 235, 255, 0.92),
+        0 0 18px rgba(48, 178, 255, 0.58),
+        inset 0 0 12px rgba(202, 246, 255, 0.5);
+    animation: hologram-flicker 2.8s steps(1, end) infinite;
+}
+
+.hologram-reticle {
+    width: 100%;
+    height: 100%;
+    border: 1px solid rgba(84, 202, 255, 0.5);
+    border-radius: 50%;
+    box-shadow:
+        0 0 9px rgba(60, 187, 255, 0.28),
+        inset 0 0 9px rgba(60, 187, 255, 0.18);
+    animation: hologram-pulse 2.2s ease-in-out infinite;
+}
+
+.hologram-reticle::before,
+.hologram-reticle::after {
+    content: '';
+    position: absolute;
+    background: rgba(105, 218, 255, 0.55);
+}
+
+.hologram-reticle::before {
+    left: 50%;
+    top: -6px;
+    width: 1px;
+    height: calc(100% + 12px);
+}
+
+.hologram-reticle::after {
+    left: -6px;
+    top: 50%;
+    width: calc(100% + 12px);
+    height: 1px;
+}
+
+.hologram-beam {
+    width: 72%;
+    height: 145%;
+    opacity: 0.24;
+    background: linear-gradient(
+        to bottom,
+        transparent,
+        rgba(68, 194, 255, 0.18) 18%,
+        rgba(129, 226, 255, 0.48) 50%,
+        rgba(68, 194, 255, 0.18) 82%,
+        transparent
+    );
+    clip-path: polygon(28% 0, 72% 0, 100% 50%, 72% 100%, 28% 100%, 0 50%);
+}
+
+.hologram-label {
+    position: absolute;
+    left: 50%;
+    top: calc(100% + 9px);
+    min-width: 112px;
+    transform: translateX(-50%);
+    padding: 4px 8px 5px;
+    border: 1px solid rgba(70, 186, 255, 0.36);
+    border-radius: 4px;
+    background: rgba(0, 18, 38, 0.58);
+    box-shadow: 0 0 12px rgba(31, 156, 255, 0.16);
+    color: #8de3ff;
+    font-size: 10px;
+    line-height: 1.15;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    white-space: nowrap;
+}
+
+.hologram-name {
+    display: block;
+    color: #d5f7ff;
+    font-weight: 700;
+}
+
+.hologram-ratio {
+    display: block;
+    margin-top: 3px;
+    color: #52c7ff;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+}
+
+@keyframes hologram-pulse {
+    0%, 100% { opacity: 0.48; transform: translate(-50%, -50%) scale(0.94); }
+    50% { opacity: 0.9; transform: translate(-50%, -50%) scale(1.04); }
+}
+
+@keyframes hologram-flicker {
+    0%, 91%, 94%, 100% { opacity: 0.82; }
+    92% { opacity: 0.5; }
+    93% { opacity: 0.95; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #travel-streaks {
+        display: none;
+    }
+
+    .hologram-core,
+    .hologram-reticle {
+        animation: none;
+    }
 }
 
 /* Mobile-only chrome (bottom nav, sheet headers) — hidden on desktop */
@@ -291,6 +458,7 @@ body {
 
 .object-item.star::before { color: #FFDD44; }
 .object-item.planet::before { color: #4a9eff; }
+.object-item.exoplanet::before { color: #6CC6FF; }
 .object-item.moon::before { color: #AAAAAA; }
 .object-item.blackhole::before { content: '◉'; color: #FF4400; }
 .object-item.galaxy::before { content: '◯'; color: #FFEEDD; }
@@ -410,10 +578,66 @@ body {
     padding: 15px 20px;
     border-radius: 10px;
     border: 1px solid rgba(74, 158, 255, 0.3);
-    transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: bottom left;
+    transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.25s ease,
+                transform 0.25s ease,
+                visibility 0.25s ease;
 }
 
 #sidebar.collapsed ~ #controls-info {
+    left: 44px;
+}
+
+#controls-info.minimized {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px) scale(0.96);
+    pointer-events: none;
+}
+
+#controls-info-button {
+    position: absolute;
+    bottom: 20px;
+    left: 300px;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: auto;
+    cursor: pointer;
+    color: #d9eaff;
+    font-size: 1.35rem;
+    line-height: 1;
+    background: rgba(0, 10, 30, 0.82);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(74, 158, 255, 0.45);
+    border-radius: 50%;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+    z-index: 30;
+    transition: left 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                background 0.2s ease,
+                border-color 0.2s ease,
+                transform 0.2s ease,
+                box-shadow 0.2s ease;
+}
+
+#controls-info-button[hidden] {
+    display: none;
+}
+
+#controls-info-button:hover,
+#controls-info-button:focus-visible {
+    background: rgba(74, 158, 255, 0.28);
+    border-color: rgba(124, 190, 255, 0.8);
+    transform: scale(1.08);
+    box-shadow: 0 0 16px rgba(74, 158, 255, 0.4);
+    outline: none;
+}
+
+#sidebar.collapsed ~ #controls-info-button {
     left: 44px;
 }
 
@@ -1207,7 +1431,8 @@ body {
         display: none;
     }
 
-    #controls-info {
+    #controls-info,
+    #controls-info-button {
         display: none; /* keyboard/mouse hints don't apply on touch */
     }
 

@@ -1106,6 +1106,32 @@ export const nearbyStars = [
         description: "Lonely bright star with debris disk, exoplanet candidate"
     },
     {
+        name: "LHS 1140",
+        mass: "0.184 Solar masses",
+        type: "star",
+        spectralClass: "M4.5V",
+        distance: 48.88 * LY,
+        direction: { x: 0.9461, y: -0.2634, z: 0.1882 },
+        radius: 150340, // km (0.2159 solar radii)
+        color: 0xFF5533,
+        emissive: 0xCC3311,
+        temperature: "3,096 K",
+        description: "Nearby cool red dwarf hosting the temperate super-Earth LHS 1140 b",
+        children: [
+            {
+                name: "LHS 1140 b",
+                mass: "5.60 Earth masses",
+                type: "planet",
+                radius: 11022, // km (1.730 Earth radii)
+                distance: 0.0946 * AU,
+                orbitalPeriod: 24.73723,
+                color: 0x527FA3,
+                temperature: "226 K equilibrium",
+                description: "Temperate transiting super-Earth in the habitable zone; observations suggest it may be water-rich, but its atmosphere and surface remain uncertain"
+            }
+        ]
+    },
+    {
         name: "Castor",
         type: "star",
         spectralClass: "A1V",
@@ -1511,6 +1537,7 @@ const REAL_STAR_COORDS = {
     "Vela Pulsar": { ra: 128.84, dec: -45.18 },
     "Gemma (Alpha Coronae Borealis)": { ra: 233.68, dec: 26.71 },
     "Fomalhaut": { ra: 344.41, dec: -29.62 },
+    "LHS 1140": { ra: 11.248625, dec: -15.274108 },
     "Castor": { ra: 113.65, dec: 31.89 },
     "Pollux": { ra: 116.33, dec: 28.02 }
 };
