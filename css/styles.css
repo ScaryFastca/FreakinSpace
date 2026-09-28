@@ -968,6 +968,8 @@ body {
 }
 
 #home-label {
+    pointer-events: auto; /* click to fly down to your location */
+    cursor: pointer;
     font-size: 0.7rem;
     color: #4a9eff;
     text-transform: uppercase;
@@ -2042,6 +2044,7 @@ body {
 }
 #view-orientation button[hidden] { display: none; }
 #compass-needle { transition: transform 0.08s linear; }
+#compass-btn svg { flex-shrink: 0; }
 
 @media (max-width: 768px), (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
     #view-orientation { left: 12px; top: 96px; }

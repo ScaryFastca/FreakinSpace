@@ -1,13 +1,13 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=80';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=81';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=80';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=80';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=80';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=81';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=81';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=81';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=80';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=80';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=81';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=81';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -659,6 +659,116 @@ function retargetFocus(name) {
     if (body.type !== 'satellite') startRollAnimation('north');
 }
 
+// ── Fly to a spot on Earth ───────────────────────────────────────────────
+// Clicking Earth when it's big on screen (or while following the ISS), or
+// clicking the "You" label, glides the camera round to look straight down at
+// that spot from satellite-view height, north up, focused on Earth, so the
+// user can keep scrolling down into it. Worked in Earth's own frame so the
+// spot stays put while Earth spins during the flight.
+let earthSpotFlight = null;
+const EARTH_SPOT_FLIGHT_MS = 2200;
+const _spotQuat = new THREE.Quaternion();
+const _spotVec = new THREE.Vector3();
+const _spotEarth = new THREE.Vector3();
+
+function flyToEarthSpot(spotLocalDir) {
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return;
+    const R = earth.mesh.userData.visualRadius;
+    earth.mesh.getWorldPosition(_spotEarth);
+    earth.mesh.getWorldQuaternion(_spotQuat);
+    const toLocal = _spotQuat.clone().invert();
+    const camLocal = camera.position.clone().sub(_spotEarth).applyQuaternion(toLocal);
+    const startAlt = Math.max(camLocal.length() - R, 1e-6);
+    // Satellite-view height: well below where we are, within ~250-2000 km
+    const km = R / 6371;
+    const endAlt = THREE.MathUtils.clamp(startAlt * 0.35, 250 * km, 2000 * km);
+    flyToAnimation = null;
+    focusRetarget = null;
+    earthSpotFlight = {
+        start: performance.now(),
+        fromDir: camLocal.clone().normalize(),
+        toDir: spotLocalDir.clone().normalize(),
+        fromAlt: startAlt,
+        toAlt: endAlt,
+        fromTargetLocal: controls.target.clone().sub(_spotEarth).applyQuaternion(toLocal),
+        fromUp: camera.up.clone()
+    };
+    if (currentFocusedBody !== 'Earth') {
+        currentFocusedBody = 'Earth';
+        updateSidebarSelection('Earth');
+        showBodyInfo(earth.data);
+    }
+    cameraOffsetFromTarget = null;
+    chaseCam.hasOffset = false;
+    rollAnimation = null;
+    controls.minDistance = 1e-6; // limits are set again by the Earth close-up camera
+}
+
+// Per frame, from the follow block while focused on Earth
+function stepEarthSpotFlight(earthMesh, earthWorld) {
+    const f = earthSpotFlight;
+    const t = Math.min(1, (performance.now() - f.start) / EARTH_SPOT_FLIGHT_MS);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const R = earthMesh.userData.visualRadius;
+    earthMesh.getWorldQuaternion(_spotQuat);
+    // Direction: turn from where the camera is to above the spot (great circle)
+    const angle = f.fromDir.angleTo(f.toDir);
+    _spotVec.crossVectors(f.fromDir, f.toDir);
+    const dir = _spotVec.lengthSq() > 1e-12
+        ? f.fromDir.clone().applyAxisAngle(_spotVec.normalize(), angle * e)
+        : f.toDir.clone();
+    const alt = f.fromAlt * Math.pow(f.toAlt / f.fromAlt, e);
+    camera.position.copy(dir.applyQuaternion(_spotQuat)).multiplyScalar(R + alt).add(earthWorld);
+    // Look-at point glides to Earth's centre; view eases to north up
+    controls.target.copy(f.fromTargetLocal).multiplyScalar(1 - e).applyQuaternion(_spotQuat).add(earthWorld);
+    camera.up.copy(f.fromUp).lerp(_spotVec.set(0, 1, 0).applyQuaternion(_spotQuat), e).normalize();
+    if (t >= 1) {
+        earthSpotFlight = null;
+        // Hand straight over to the Earth close-up camera, already riding
+        // Earth's spin; otherwise the first frames after landing don't turn
+        // with Earth and the spot slips (0.3° per frame at 1.4 hr/s)
+        earthSurfaceCam.active = true;
+        earthSurfaceCam.lastDist = 0;
+        earthSurfaceCam.prevQuat.copy(_spotQuat);
+        earthSurfaceCam.hasPrevQuat = true;
+    }
+}
+
+// Earth-local direction of the ground under a screen point. Ray built from
+// the fov and camera orientation: Raycaster.setFromCamera loses precision with
+// the tiny near planes used up close (see earthGroundUnderCursor).
+function earthSpotUnderPointer(clientX, clientY) {
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return null;
+    const rect = renderer.domElement.getBoundingClientRect();
+    const nx = ((clientX - rect.left) / rect.width) * 2 - 1, ny = -((clientY - rect.top) / rect.height) * 2 + 1;
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const ray = new THREE.Ray(camera.position.clone(),
+        new THREE.Vector3(nx * tanHalf * camera.aspect, ny * tanHalf, -1).applyQuaternion(camera.quaternion).normalize());
+    const center = earth.mesh.getWorldPosition(new THREE.Vector3());
+    const hit = ray.intersectSphere(new THREE.Sphere(center, earth.mesh.userData.visualRadius), new THREE.Vector3());
+    if (!hit) return null;
+    return hit.sub(center).applyQuaternion(earth.mesh.getWorldQuaternion(_spotQuat).invert()).normalize();
+}
+
+function isEarthLargeOnScreen() {
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return false;
+    const d = camera.position.distanceTo(earth.mesh.getWorldPosition(_spotEarth));
+    const R = earth.mesh.userData.visualRadius;
+    if (d <= R) return true;
+    const angularDiameter = 2 * Math.asin(R / d);
+    return angularDiameter / THREE.MathUtils.degToRad(camera.fov) >= 1 / 3;
+}
+
+// Earth-local direction of the user's location (the "You" marker)
+function userLocationLocalDir() {
+    if (userLatitude == null || userLongitude == null) return null;
+    const lat = THREE.MathUtils.degToRad(userLatitude), lon = THREE.MathUtils.degToRad(userLongitude);
+    return new THREE.Vector3(Math.cos(lat) * Math.cos(lon), Math.sin(lat), -Math.cos(lat) * Math.sin(lon));
+}
+
 // "Already close" means within a few radii of the body: clicking it then hands
 // off in place rather than flying to the standard framing
 function isCameraNearBody(body) {
@@ -972,6 +1082,10 @@ function init() {
     setupChaseCamDrag(renderer.domElement);
     setupWheelHelpers(renderer.domElement);
     setupViewRoll(renderer.domElement);
+    document.getElementById('home-label')?.addEventListener('click', () => {
+        const dir = userLocationLocalDir();
+        if (dir && viewMode === 'map') flyToEarthSpot(dir);
+    });
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.minDistance = 1; // Allow getting very close in comparison view
@@ -3330,7 +3444,9 @@ function animate() {
                 earthSurfaceCam.hasPrevQuat = true;
             }
             
-            if (focusRetarget && focusRetarget.name === currentFocusedBody) {
+            if (earthSpotFlight && currentFocusedBody === 'Earth') {
+                stepEarthSpotFlight(body.mesh, _animWorldPosition);
+            } else if (focusRetarget && focusRetarget.name === currentFocusedBody) {
                 // Hand-off glide (see retargetFocus): camera rides along with the
                 // body, only the look-at point and roll change
                 const t = Math.min(1, (performance.now() - focusRetarget.start) / FOCUS_RETARGET_MS);
@@ -3405,7 +3521,7 @@ function animate() {
     // Flights re-level a rolled camera gradually (the view is moving anyway)
     if (flyToAnimation && cameraIsRolled()) camera.up.lerp(_WORLD_UP, 0.08).normalize();
     // Rolled but not chasing: orbit around the camera's own up
-    if (!chaseCam.active && cameraIsRolled() && !flyToAnimation && (chaseDrag.dTheta || chaseDrag.dPhi)) {
+    if (!chaseCam.active && cameraIsRolled() && !flyToAnimation && !earthSpotFlight && (chaseDrag.dTheta || chaseDrag.dPhi)) {
         const [dTheta, dPhi] = takeOrbitStep();
         _chaseVec.copy(camera.position).sub(controls.target);
         orbitAroundPole(_chaseVec, camera.up, dTheta, dPhi);
@@ -3503,7 +3619,7 @@ function earthGroundUnderCursor(clientX, clientY, R, fromDist) {
 
 function prepareEarthSurfaceCamera() {
     const earth = celestialBodies.get('Earth');
-    const focused = earth && viewMode === 'map' && currentFocusedBody === 'Earth' && !flyToAnimation && !focusRetarget;
+    const focused = earth && viewMode === 'map' && currentFocusedBody === 'Earth' && !flyToAnimation && !focusRetarget && !earthSpotFlight;
     const R = earth?.mesh.userData.visualRadius || 1;
     const dist = camera.position.distanceTo(controls.target);
     const active = focused && dist - R < R * SURFACE_MODE_ALT;
@@ -3583,6 +3699,7 @@ function finishEarthSurfaceCamera() {
 function focusOnBody(name) {
     const body = celestialBodies.get(name);
     if (!body) return;
+    earthSpotFlight = null;
     // A new selection starts fresh: otherwise "On + angle" restores the
     // viewpoint it last locked for this body, undoing the north-up framing
     chaseCam.hasOffset = false;
@@ -4156,6 +4273,11 @@ function onClick(event) {
     if (bodyName) {
         if (viewMode === 'sizeCompare') {
             focusOnSizeComparisonObject(bodyName);
+        } else if (bodyName === 'Earth' && intersects.length > 0 && (isEarthLargeOnScreen()
+            || celestialBodies.get(currentFocusedBody)?.type === 'satellite')) {
+            // Zoomed in on Earth: fly down to the spot that was clicked
+            const spot = earthSpotUnderPointer(event.clientX, event.clientY);
+            if (spot) flyToEarthSpot(spot); else focusOnBody(bodyName);
         } else {
             focusOnBody(bodyName);
         }
