@@ -42,12 +42,30 @@ no framework, no account.
   and optionally all ~10,000 Starlink satellites, from CelesTrak's public catalogue
 - **Day and night.** An 8K Earth with city lights that come on along the terminator
 - **Satellite view.** Keep scrolling into Earth to go from orbit to street level,
-  with high-resolution imagery streaming in as you descend
+  with high-resolution imagery streaming in as you descend. Scrolling zooms toward
+  the cursor, like a web map.
+- **Night view.** Up close, the night side shows a dark street map with place and
+  street names, blending into the daylight imagery across the terminator. Or switch
+  to city lights, which follow the real streets and districts up close.
+
+### Film it
+- **Follow modes.** The camera can follow the selected object, or follow it *and*
+  keep its angle: a chase cam that turns with the ISS so a framed horizon stays put
+  all the way around the planet. Drag to a new angle and it locks on there.
+- **Roll and level.** Ctrl + drag rolls the view; the compass puts north back up and
+  the level-horizon button lines up with the ISS's own "up".
+- **Smooth hand-offs.** Following the ISS, click Earth (or Shift-drag) to switch
+  focus without the camera moving, then scroll straight down into it.
+- **Scale changes as a shot.** Switching between compressed and realistic scale
+  slides every planet and moon to its new distance while the camera holds still.
 
 ### Travel through time
-- Scrub to any date, or run time forwards or backwards
-- Scroll over the speed slider for fine control, from real time (1 sec/sec) up to
-  a year per second. Planets, moons, the ISS and every satellite follow the clock.
+- Opens playing at about 1.4 hours per second, so you can see things move
+- Pick any date, or run time forwards or backwards
+- Scroll anywhere over the time panel, or use − and +, to step through speeds from
+  20 sec/s doubling up to a year per second (and the same in reverse). One-click
+  presets from real time to 1 yr/s. Planets, moons, the ISS and every satellite
+  follow the clock.
 
 ### Go beyond
 - A real night sky of about 9,000 naked-eye stars, with constellation lines and labels
@@ -60,10 +78,13 @@ no framework, no account.
 | Action | Mouse | Touch |
 |---|---|---|
 | Rotate | Drag | One-finger drag |
-| Zoom | Scroll | Pinch |
+| Zoom | Scroll (toward the cursor near Earth) | Pinch |
 | Pan | Shift + drag, or middle mouse | Two-finger drag |
+| Roll the view | Ctrl + drag | – |
+| North up / level horizon | Compass and horizon buttons (top left) | Same buttons |
 | Select / fly to | Click an object or pick it from the side panel | Tap |
-| Time speed | Scroll over the speed slider | Slider |
+| Play / pause | Space, or the play button | Play button |
+| Time speed | Scroll over the time panel, − / + buttons, presets | Buttons and presets |
 
 On phones, a bottom bar opens the object list, time controls and settings.
 
@@ -89,7 +110,7 @@ js/main.js            Scene setup, camera, UI, timeline, orbital mechanics
 js/celestialData.js   Planets, moons, stars and exoplanets (km, days)
 js/iss.js             Live ISS position, model and trail
 js/satellites.js      CelesTrak satellite groups and caching
-js/earthTiles.js      Streaming satellite imagery for Earth close-ups
+js/earthTiles.js      Streaming imagery and night street map for Earth close-ups
 js/stellarEffects.js  Star surface, corona and black hole shaders
 js/textures.js        Procedural textures for bodies without real maps
 textures/             Planet and Earth maps
@@ -99,7 +120,8 @@ data/                 Star catalogue and constellation lines
 
 When you deploy changes, bump the `?v=` number on `main.js` in `index.html`
 *and* on every import at the top of `main.js`, so browsers fetch the new files
-instead of reusing cached ones.
+instead of reusing cached ones. `styles.css` has its own `?v=` in `index.html`;
+bump it when the CSS changes.
 
 ## Data and credits
 
@@ -111,6 +133,7 @@ instead of reusing cached ones.
 | Satellite orbits | [CelesTrak](https://celestrak.org/) | Free public data |
 | Orbit propagation | [satellite.js](https://github.com/shashwatak/satellite-js) (SGP4) | MIT |
 | Satellite imagery | Esri World Imagery (Esri, Maxar, Earthstar Geographics, and the GIS User Community) | Esri terms of use |
+| Night street map | Esri Dark Gray Canvas (Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community) | Esri terms of use |
 | Night sky stars | [HYG Database](https://github.com/astronexus/HYG-Database) v4.1 | CC BY-SA 4.0 |
 | Constellation lines | [d3-celestial](https://github.com/ofrohn/d3-celestial) | BSD 3-Clause |
 | Planet positions | JPL mean orbital elements (J2000) | Public domain |
