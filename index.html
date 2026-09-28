@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=15">
+    <link rel="stylesheet" href="css/styles.css?v=20">
     <script type="importmap">
     {
         "imports": {
@@ -108,14 +108,24 @@
                 <span class="toggle-label">Solar System:</span>
                 <span id="orbital-mode">Aligned</span>
             </button>
-            <button id="show-stars-toggle" class="toggle-btn">
-                <span class="toggle-label">Solar System Stars:</span>
-                <span id="show-stars-mode">On</span>
-            </button>
-            <button id="constellations-toggle" class="toggle-btn">
-                <span class="toggle-label">Constellations:</span>
-                <span id="constellations-mode">On</span>
-            </button>
+            <!-- Stars menu: opens on hover (mouse) or tap (touch) -->
+            <div class="popup-menu" id="stars-menu">
+                <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
+                    <span class="toggle-label">Stars:</span>
+                    <span id="stars-menu-summary">near stars</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel" role="menu">
+                    <label class="popup-row"><input type="checkbox" id="menu-background-stars" checked> Background stars</label>
+                    <label class="popup-row"><input type="checkbox" id="menu-big-stars" checked> Big stars <span class="popup-hint">Betelgeuse, Sirius…</span></label>
+                    <label class="popup-row"><input type="checkbox" id="menu-constellations"> Constellations</label>
+                    <div class="popup-heading">Star scale</div>
+                    <div class="popup-hint popup-note" id="star-scale-note" hidden>Realistic planet scale always uses realistic star distances</div>
+                    <label class="popup-row"><input type="radio" name="star-scale" value="near" checked> Compressed (near stars)</label>
+                    <label class="popup-row"><input type="radio" name="star-scale" value="far"> Compressed (far stars)</label>
+                    <label class="popup-row"><input type="radio" name="star-scale" value="realistic"> Realistic</label>
+                </div>
+            </div>
             <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
                 <span class="toggle-label">Satellites:</span>
                 <span id="satellites-mode">On</span>
@@ -252,6 +262,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=81"></script>
+    <script type="module" src="js/main.js?v=88"></script>
 </body>
 </html>

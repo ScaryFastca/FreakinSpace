@@ -1,13 +1,13 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=81';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=87';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=81';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=81';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=81';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=87';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=87';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=87';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=81';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=81';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=87';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=87';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -403,7 +403,20 @@ let scaleMode = 'compressed'; // 'compressed' or 'realistic'
 let orbitalMode = 'aligned'; // 'aligned' or 'realistic' - controls planet positions
 let showHomeIndicator = true; // Toggle for home direction arrow
 let mikoIndicatorActive = false; // Konami-code easter egg: CodeMiko arrow on Uranus
-let showStars = true; // Toggle for background stars visibility
+let showStars = true; // Background real-sky starfield
+let showBigStars = true; // Named star systems (Betelgeuse, Sirius…) as 3D objects
+// Star distances, in scene units per light year. Separate from the planet
+// Scale toggle. "Far" pushes the big stars out so they read as distant points.
+const STAR_SCALES = {
+    near: { label: 'Compressed (near stars)', unitsPerLy: 500 },
+    far: { label: 'Compressed (far stars)', unitsPerLy: 2500 },
+    realistic: { label: 'Realistic', unitsPerLy: 10000 }
+};
+let starScaleMode = 'near';
+// The star-scale choice is for decluttering compressed views; with realistic
+// planet scale the stars are always at realistic distances.
+const effectiveStarScale = () => (scaleMode === 'realistic' ? 'realistic' : starScaleMode);
+const starUnitsPerLy = () => STAR_SCALES[effectiveStarScale()].unitsPerLy;
 // Keep interactive stars distinguishable from the 1-3.5px background field.
 // This is the full diameter of the existing glow/spike sprite, not the star core.
 const COARSE_POINTER_MQ = window.matchMedia('(pointer: coarse)');
@@ -411,7 +424,10 @@ const MIN_INTERACTIVE_STAR_GLINT_PX = 18;
 const TOUCH_TAP_MOVE_TOLERANCE_PX = 12;
 const MOUSE_BODY_HIT_RADIUS_PX = 18;
 const TOUCH_BODY_HIT_RADIUS_PX = 36;
-let showConstellations = true; // Toggle for constellation lines and labels
+let showConstellations = false; // Constellation lines and labels (off at start; see constellation intro)
+// On load: constellations appear after 3 s, fade in over 2 s, fade out over 4 s
+const CONSTELLATION_INTRO = { delay: 3000, fadeIn: 2000, fadeOut: 4000 };
+let constellationIntro = { start: null }; // clock starts once constellations are drawing; null once finished or overridden
 let constellationsCache = null; // cached JSON for constellations
 let constellationsGroup = null; // THREE.Group containing lines and labels
 let userLatitude = 40.7128; // Default: New York
@@ -622,10 +638,11 @@ let isCameraLocked = true; // Default: camera moves with object
 // in the object's local frame and re-applied each frame; whatever the user
 // drags or zooms becomes the new stored offset, so letting go re-locks there.
 let cameraAngleLock = false;
-const chaseCam = { active: false, bodyName: null, offsetLocal: new THREE.Vector3(), upLocal: new THREE.Vector3(0, 1, 0), hasOffset: false };
+const chaseCam = { active: false, bodyName: null, offsetLocal: new THREE.Vector3(), upLocal: new THREE.Vector3(0, 1, 0), targetOffsetLocal: new THREE.Vector3(), hasOffset: false };
 const _chaseQuat = new THREE.Quaternion();
 const _chaseVec = new THREE.Vector3();
 const _chaseSph = new THREE.Spherical();
+const _targetVec = new THREE.Vector3();
 
 // Focus hand-off without moving the camera: the look-at point glides from the
 // old target to the new body (and the camera's roll eases to match), so e.g.
@@ -822,12 +839,14 @@ function setupWheelHelpers(canvas) {
         lastWheel.y = e.clientY;
         lastWheel.time = performance.now();
         const anim = flyToAnimation;
-        if (viewMode !== 'map' || !anim || anim.isSizeCompare || !anim.offset) return;
+        if (viewMode !== 'map' || !anim || anim.isSizeCompare) return;
+        const offset = anim.offset || anim.offsetLocal;
+        if (!offset) return;
         const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
         if (!dy) return;
         const factor = Math.pow(0.95, -controls.zoomSpeed * Math.sign(dy)); // wheel up (dy < 0) → 0.95, closer
-        const len = Math.max(anim.offset.length() * factor, controls.minDistance);
-        anim.offset.setLength(len);
+        const len = Math.max(offset.length() * factor, controls.minDistance);
+        offset.setLength(len);
         if (anim.endDistanceToTarget) anim.endDistanceToTarget = len;
     }, { capture: true, passive: true });
 }
@@ -1026,6 +1045,10 @@ const _comparisonProjectedPosition = new THREE.Vector3();
 const _comparisonDirection = new THREE.Vector3();
 const _comparisonCameraForward = new THREE.Vector3();
 const _comparisonCameraRight = new THREE.Vector3();
+const _animWorldQuat = new THREE.Quaternion();
+const _animIssTargetOffset = new THREE.Vector3();
+const _animIssCamOffset = new THREE.Vector3();
+const _animIssUp = new THREE.Vector3();
 
 
 
@@ -1198,11 +1221,8 @@ function init() {
         label.textContent = next;
         setSatelliteMode(next);
     });
-    document.getElementById('show-stars-toggle').addEventListener('click', toggleShowStars);
-    const constellationsToggle = document.getElementById('constellations-toggle');
-    if (constellationsToggle) {
-        constellationsToggle.addEventListener('click', toggleConstellations);
-    }
+    setupPopupMenus();
+    setupBodyInfoPeek();
     
 
     
@@ -1401,13 +1421,8 @@ function init() {
     }
     
     // Initialize show stars toggle state
-    document.getElementById('show-stars-mode').textContent = showStars ? 'On' : 'Off';
     
     // Initialize constellations toggle state
-    const constellationsModeText = document.getElementById('constellations-mode');
-    if (constellationsModeText) {
-        constellationsModeText.textContent = showConstellations ? 'On' : 'Off';
-    }
     
 
     // Initialize gravity well toggle state - REMOVED
@@ -2004,7 +2019,7 @@ function createNearbyStars() {
         systemContainer.add(mesh);
         
         // Position the entire system at stellar scale (much further out)
-        const scaleFactor = scaleMode === 'realistic' ? 10000 : 500;
+        const scaleFactor = starUnitsPerLy();
         systemContainer.position.set(
             position.x * scaleFactor,
             position.y * scaleFactor,
@@ -2013,7 +2028,7 @@ function createNearbyStars() {
 
         // Visibility is controlled by the updateZoomLevel loop which checks showStars
         // But we default to true if showStars is active
-        systemContainer.visible = showStars;
+        systemContainer.visible = showBigStars;
 
         scene.add(systemContainer);
 
@@ -2997,7 +3012,7 @@ function buildConstellationLinesAndLabels(data) {
     group.add(labelsGroup);
     
     constellationsGroup = group;
-    constellationsGroup.visible = showConstellations;
+    setConstellationOpacity(showConstellations ? 1 : 0);
     return group;
 }
 
@@ -3128,6 +3143,8 @@ function animate() {
     // Update spacetime fabric with gravity wells block REMOVED
 
     applyScaleTransition();
+    applyStarScaleTransition();
+    updateConstellationIntro();
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
@@ -3253,7 +3270,7 @@ function animate() {
     
     // Handle fly-to animation
     if (flyToAnimation) {
-        if (!flyToAnimation.isSizeCompare && flyToAnimation.bodyName && flyToAnimation.offset) {
+        if (!flyToAnimation.isSizeCompare && flyToAnimation.bodyName && (flyToAnimation.offset || flyToAnimation.offsetLocal)) {
             let targetBody = null;
             if (flyToAnimation.bodyName === 'Earth (Wide View)') {
                 targetBody = celestialBodies.get('Earth');
@@ -3261,9 +3278,19 @@ function animate() {
                 targetBody = celestialBodies.get(flyToAnimation.bodyName);
             }
             if (targetBody && targetBody.mesh && viewMode !== 'sizeCompare') {
+                targetBody.mesh.updateWorldMatrix(true, false);
                 targetBody.mesh.getWorldPosition(_animWorldPosition);
-                flyToAnimation.endTarget.copy(_animWorldPosition);
-                flyToAnimation.endPos.copy(_animWorldPosition).add(flyToAnimation.offset);
+                if (flyToAnimation.bodyName === 'ISS' && flyToAnimation.offsetLocal) {
+                    targetBody.mesh.getWorldQuaternion(_animWorldQuat);
+                    _animIssTargetOffset.copy(flyToAnimation.targetOffsetLocal).applyQuaternion(_animWorldQuat);
+                    flyToAnimation.endTarget.copy(_animWorldPosition).add(_animIssTargetOffset);
+                    _animIssCamOffset.copy(flyToAnimation.offsetLocal).applyQuaternion(_animWorldQuat);
+                    flyToAnimation.endPos.copy(flyToAnimation.endTarget).add(_animIssCamOffset);
+                    _animIssUp.set(0, 1, 0).applyQuaternion(_animWorldQuat).normalize();
+                } else if (flyToAnimation.offset) {
+                    flyToAnimation.endTarget.copy(_animWorldPosition);
+                    flyToAnimation.endPos.copy(_animWorldPosition).add(flyToAnimation.offset);
+                }
             }
         }
 
@@ -3395,6 +3422,9 @@ function animate() {
             // Regular map view — direct linear interpolation with global ease
             camera.position.lerpVectors(flyToAnimation.startPos, flyToAnimation.endPos, easeProgress);
             controls.target.lerpVectors(flyToAnimation.startTarget, flyToAnimation.endTarget, easeProgress);
+            if (flyToAnimation.bodyName === 'ISS' && flyToAnimation.startUp) {
+                camera.up.lerpVectors(flyToAnimation.startUp, _animIssUp, easeProgress).normalize();
+            }
         }
 
         // Animation complete
@@ -3402,12 +3432,30 @@ function animate() {
             if (flyToAnimation.endMinDistance !== undefined) {
                 controls.minDistance = flyToAnimation.endMinDistance;
             }
+            const arrivedAtISS = flyToAnimation.bodyName === 'ISS';
+            const localOffset = flyToAnimation.offsetLocal ? flyToAnimation.offsetLocal.clone() : null;
+            const localTargetOffset = flyToAnimation.targetOffsetLocal ? flyToAnimation.targetOffsetLocal.clone() : null;
             flyToAnimation = null;
             cameraOffsetFromTarget = null;
-            // Arrive upright (north up); the gradual re-level during the
-            // flight may not have fully finished
-            if (cameraIsRolled()) camera.up.set(0, 1, 0);
-            chaseCam.hasOffset = false; // "On + angle" locks onto this new view
+            
+            if (arrivedAtISS) {
+                camera.up.copy(_animIssUp);
+                isCameraLocked = true;
+                cameraAngleLock = true;
+                chaseCam.bodyName = 'ISS';
+                if (localOffset) chaseCam.offsetLocal.copy(localOffset);
+                if (localTargetOffset) chaseCam.targetOffsetLocal.copy(localTargetOffset);
+                chaseCam.upLocal.set(0, 1, 0);
+                chaseCam.hasOffset = true;
+                chaseCam.active = true;
+                const lockModeEl = document.getElementById('camera-lock-mode');
+                if (lockModeEl) lockModeEl.textContent = 'On + angle';
+            } else {
+                // Arrive upright (north up); the gradual re-level during the
+                // flight may not have fully finished
+                if (cameraIsRolled()) camera.up.set(0, 1, 0);
+                chaseCam.hasOffset = false; // "On + angle" locks onto this new view
+            }
         }
     }
     
@@ -3468,6 +3516,7 @@ function animate() {
                     chaseCam.bodyName = currentFocusedBody;
                     const toLocal = _chaseQuat.clone().invert();
                     chaseCam.offsetLocal.copy(_animCameraOffset).applyQuaternion(toLocal);
+                    chaseCam.targetOffsetLocal.set(0, 0, 0);
                     // Keep the current roll too (relative to the object), so
                     // switching into this mode doesn't turn the view
                     chaseCam.upLocal.copy(camera.up).applyQuaternion(toLocal).normalize();
@@ -3486,14 +3535,20 @@ function animate() {
                     orbitAroundPole(chaseCam.offsetLocal, chaseCam.upLocal, dTheta, dPhi);
                 }
                 controls.target.copy(_animWorldPosition);
-                camera.position.copy(_animWorldPosition)
+                if (chaseCam.targetOffsetLocal && chaseCam.targetOffsetLocal.lengthSq() > 1e-8) {
+                    controls.target.add(_targetVec.copy(chaseCam.targetOffsetLocal).applyQuaternion(_chaseQuat));
+                }
+                camera.position.copy(controls.target)
                     .add(_chaseVec.copy(chaseCam.offsetLocal).applyQuaternion(_chaseQuat));
                 // Roll with the object too, so a framed horizon stays level
                 camera.up.copy(chaseCam.upLocal).applyQuaternion(_chaseQuat);
                 chaseCam.active = true;
-            } else if (isCameraLocked) {
+            } else if (isCameraLocked || (currentFocusedBody === 'Earth' && earthSurfaceCam.active)) {
                 // Camera maintains its spherical position relative to the moving target
-                // This allows free orbiting while traveling with the object
+                // This allows free orbiting while traveling with the object.
+                // Earth close-up always rides along (even with follow off):
+                // otherwise Earth orbits/spins out from under the camera and the
+                // spot you flew down to slides away.
                 controls.target.copy(_animWorldPosition);
                 camera.position.copy(_animWorldPosition).add(_animCameraOffset);
             } else {
@@ -3518,8 +3573,8 @@ function animate() {
     // OrbitControls rotate; the chase cam rotates itself (setupChaseCamDrag)
     updateViewRoll();
 
-    // Flights re-level a rolled camera gradually (the view is moving anyway)
-    if (flyToAnimation && cameraIsRolled()) camera.up.lerp(_WORLD_UP, 0.08).normalize();
+    // Flights re-level a rolled camera gradually (the view is moving anyway), except when targeting the ISS
+    if (flyToAnimation && flyToAnimation.bodyName !== 'ISS' && cameraIsRolled()) camera.up.lerp(_WORLD_UP, 0.08).normalize();
     // Rolled but not chasing: orbit around the camera's own up
     if (!chaseCam.active && cameraIsRolled() && !flyToAnimation && !earthSpotFlight && (chaseDrag.dTheta || chaseDrag.dPhi)) {
         const [dTheta, dPhi] = takeOrbitStep();
@@ -3655,9 +3710,23 @@ function prepareEarthSurfaceCamera() {
 // near plane (0.1) would slice it off, so it shrinks with the distance to the
 // focus point. The log depth buffer keeps precision fine at any near value.
 // The Earth close-up camera manages its own near plane.
+const _nearBodyPos = new THREE.Vector3();
 function updateNearPlaneForFocus() {
     if (earthSurfaceCam.active) return;
-    const near = THREE.MathUtils.clamp(camera.position.distanceTo(controls.target) * 0.05, 1e-6, 0.1);
+    // Nearest thing that could be clipped: the focus point, or the surface of
+    // any Solar System body. Using only the focus distance clipped Earth away
+    // (showing the sky through it) when zooming toward Earth while centred on
+    // something else, e.g. the ISS or empty space after a scale change.
+    let nearest = camera.position.distanceTo(controls.target);
+    if (viewMode === 'map') {
+        celestialBodies.forEach(body => {
+            if (body.isDistant || !body.mesh.visible) return;
+            const r = body.mesh.userData.visualRadius || 0;
+            const surface = camera.position.distanceTo(body.mesh.getWorldPosition(_nearBodyPos)) - r;
+            if (surface < nearest) nearest = surface;
+        });
+    }
+    const near = THREE.MathUtils.clamp(Math.max(nearest, 0) * 0.05, 1e-6, 0.1);
     if (Math.abs(near - camera.near) > near * 0.05) {
         camera.near = near;
         camera.updateProjectionMatrix();
@@ -3704,6 +3773,14 @@ function focusOnBody(name) {
     // viewpoint it last locked for this body, undoing the north-up framing
     chaseCam.hasOffset = false;
     rollAnimation = null;
+    if (name !== 'ISS') {
+        chaseCam.targetOffsetLocal.set(0, 0, 0);
+        if (cameraAngleLock) {
+            cameraAngleLock = false;
+            const lockModeEl = document.getElementById('camera-lock-mode');
+            if (lockModeEl) lockModeEl.textContent = isCameraLocked ? 'On' : 'Off';
+        }
+    }
 
     // Already close (e.g. following the ISS and picking Earth): switch focus
     // in place instead of flying to the standard framing
@@ -3879,9 +3956,28 @@ function focusOnBody(name) {
     
     // Calculate target camera position
     let offset;
+    let issCamOffsetLocal = null;
+    let issTargetOffsetLocal = null;
+    let targetLookAtPosition = null;
 
     // For solar system objects (not distant stars), approach from the sunlit side
-    if (body.type === 'exoplanet' && body.parent) {
+    if (name === 'ISS') {
+        target.updateWorldMatrix(true, false);
+        const issWorldQuat = new THREE.Quaternion();
+        target.getWorldQuaternion(issWorldQuat);
+
+        // Above and behind the ISS, pointing at it but up a bit to capture sky/background
+        // Local axes: +Z = travel direction (forward), +Y = radial up (away from Earth), +X = truss
+        // Camera offset relative to target: above (+Y) and behind (-Z)
+        issCamOffsetLocal = new THREE.Vector3(0, 0.04, -0.11);
+        // Look target slightly above (+Y) and forward (+Z) so the ISS sits in the lower view
+        issTargetOffsetLocal = new THREE.Vector3(0, 0.015, 0.01);
+
+        targetLookAtPosition = worldPosition.clone().add(
+            issTargetOffsetLocal.clone().applyQuaternion(issWorldQuat)
+        );
+        offset = issCamOffsetLocal.clone().applyQuaternion(issWorldQuat);
+    } else if (body.type === 'exoplanet' && body.parent) {
         const hostPosition = new THREE.Vector3();
         body.parent.getWorldPosition(hostPosition);
         const starToPlanet = worldPosition.clone().sub(hostPosition).normalize();
@@ -3930,7 +4026,7 @@ function focusOnBody(name) {
             .multiplyScalar(distance);
     }
 
-    const targetCameraPosition = worldPosition.clone().add(offset);
+    const targetCameraPosition = (targetLookAtPosition ? targetLookAtPosition.clone() : worldPosition.clone()).add(offset);
 
     // Calculate travel distance to determine animation duration
     // Slower, smoother animations for better visual flow
@@ -3983,6 +4079,19 @@ function focusOnBody(name) {
                 isReturn: isHomewardInterstellarFlight
             }
         )
+        : name === 'ISS'
+        ? {
+            startPos: startPos,
+            startTarget: startTarget,
+            startUp: camera.up.clone(),
+            endPos: targetCameraPosition,
+            endTarget: targetLookAtPosition,
+            offsetLocal: issCamOffsetLocal,
+            targetOffsetLocal: issTargetOffsetLocal,
+            startTime: Date.now(),
+            duration: travelDistance < 1 ? 1200 : duration,
+            bodyName: 'ISS'
+        }
         : {
             startPos: startPos,
             startTarget: startTarget,
@@ -4091,7 +4200,7 @@ function updateZoomLevel() {
             
             const isStarType = ['star', 'blackhole', 'neutronstar', 'galaxy', 'nebula', 'cluster'].includes(body.type);
             
-            if (showStars && isStarType) {
+            if (showBigStars && isStarType) {
                 body.mesh.visible = true;
                 
                 // Ensure parent system is visible if applicable
@@ -4142,8 +4251,8 @@ function updateZoomLevel() {
             }
         } else if (['star', 'blackhole', 'neutronstar', 'galaxy', 'nebula', 'cluster'].includes(body.type) && body.isDistant) {
             // These are distant objects outside solar system
-            if (showStars) {
-                // If Show Stars toggle is on, always show them
+            if (showBigStars) {
+                // If Big stars is on, always show them
                 body.mesh.visible = true;
             } else if (name === currentFocusedBody) {
                 body.mesh.visible = true;
@@ -4548,6 +4657,7 @@ function showBodyInfo(data) {
 
     detailsEl.innerHTML = html;
     panel.classList.remove('hidden');
+    peekBodyInfo();
     
     // If there's a scale comparison canvas, draw it
     const scaleCanvas = document.getElementById('scale-comparison');
@@ -4557,7 +4667,43 @@ function showBodyInfo(data) {
 }
 
 function hideBodyInfo() {
+    clearTimeout(infoTuckTimer);
     document.getElementById('body-info').classList.add('hidden');
+}
+
+// Desktop: the info panel slides in when something is selected, then tucks
+// away to a tab at the right edge after INFO_PEEK_MS. Hovering keeps it open
+// (or pulls it back out, even mid-slide); leaving tucks it again after the
+// same delay; clicking the tab opens it. Phones keep their own bottom card.
+const INFO_PEEK_MS = 2000;
+let infoTuckTimer = null;
+
+function peekBodyInfo() {
+    const panel = document.getElementById('body-info');
+    clearTimeout(infoTuckTimer);
+    panel.classList.remove('tucked');
+    if (isMobileLayout()) return;
+    if (!panel.matches(':hover')) infoTuckTimer = setTimeout(() => panel.classList.add('tucked'), INFO_PEEK_MS);
+}
+
+function setupBodyInfoPeek() {
+    const panel = document.getElementById('body-info');
+    if (!panel) return;
+    panel.addEventListener('mouseenter', () => {
+        clearTimeout(infoTuckTimer);
+        panel.classList.remove('tucked');
+    });
+    panel.addEventListener('mouseleave', () => {
+        if (panel.classList.contains('hidden') || isMobileLayout()) return;
+        clearTimeout(infoTuckTimer);
+        infoTuckTimer = setTimeout(() => panel.classList.add('tucked'), INFO_PEEK_MS);
+    });
+    // Touch screens/pens have no hover: tapping the tab opens it
+    panel.addEventListener('click', (e) => {
+        if (!panel.classList.contains('tucked')) return;
+        e.stopPropagation();
+        peekBodyInfo();
+    });
 }
 
 function createGuideLineCanvas() {
@@ -5283,10 +5429,6 @@ function toggleScale() {
             if (moon) moons.push({ body: moon, data: moonData, from: moon.orbitRadius ?? scaleDistance(moonData.distance, true) });
         });
     });
-    nearbyStars.forEach(starData => {
-        const body = celestialBodies.get(starData.name);
-        if (body && body.isDistant) stars.push({ body, data: starData, from: body.mesh.position.clone() });
-    });
 
     scaleMode = scaleMode === 'compressed' ? 'realistic' : 'compressed';
     document.getElementById('scale-mode').textContent = capitalize(scaleMode);
@@ -5308,20 +5450,49 @@ function toggleScale() {
         createOrbitLine(p.to, p.data.color, p.data.name);
     });
     moons.forEach(m => { m.to = scaleDistance(m.data.distance, true); });
-    stars.forEach(st => {
-        const position = calculateStarPosition(st.data);
-        const scaleFactor = scaleMode === 'realistic' ? 10000 : 500;
-        st.to = new THREE.Vector3(position.x, position.y, position.z).multiplyScalar(scaleFactor);
-    });
 
     scaleTransition = { start: performance.now(), planets, moons, stars };
     applyScaleTransition(); // first frame now, so nothing jumps
+    animateStarsToCurrentScale(); // realistic planets → realistic star distances
+    syncStarsMenu();
 
     // Follow off normally keeps turning the camera toward the selected body;
     // here that would swing the view as bodies slide out. Release the lock
     // (as panning does) so the view stays exactly as framed. Follow on keeps
     // riding along with the body at the same angle.
     if (!isCameraLocked) currentFocusedBody = null;
+}
+
+// Star scale (Stars menu): stars slide to their new distances like planets do
+let starScaleTransition = null;
+function setStarScale(mode) {
+    if (!STAR_SCALES[mode] || mode === starScaleMode) return;
+    starScaleMode = mode;
+    animateStarsToCurrentScale();
+    syncStarsMenu();
+}
+
+// Slide the named stars to the distances of the current effective star scale
+function animateStarsToCurrentScale() {
+    const stars = [];
+    nearbyStars.forEach(starData => {
+        const body = celestialBodies.get(starData.name);
+        if (!body || !body.isDistant) return;
+        const p = calculateStarPosition(starData);
+        stars.push({ body, from: body.mesh.position.clone(), to: new THREE.Vector3(p.x, p.y, p.z).multiplyScalar(starUnitsPerLy()) });
+    });
+    starScaleTransition = { start: performance.now(), stars };
+}
+
+function applyStarScaleTransition() {
+    if (!starScaleTransition) return;
+    const t = Math.min(1, (performance.now() - starScaleTransition.start) / SCALE_TRANSITION_MS);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    starScaleTransition.stars.forEach(st => {
+        const k = st.to.length() / Math.max(st.from.length(), 1e-9);
+        st.body.mesh.position.copy(st.from).multiplyScalar(Math.pow(k, e));
+    });
+    if (t >= 1) starScaleTransition = null;
 }
 
 function applyScaleTransition() {
@@ -5343,9 +5514,6 @@ function applyScaleTransition() {
         }
     });
     scaleTransition.moons.forEach(m => { m.body.orbitRadius = geo(m.from, m.to); });
-    scaleTransition.stars.forEach(st => {
-        st.body.mesh.position.copy(st.from).multiplyScalar(Math.pow(st.to.length() / st.from.length(), e));
-    });
     realisticMoonPositionsDirty = true; // moons re-placed even while paused
 
     if (t >= 1) scaleTransition = null;
@@ -5533,20 +5701,90 @@ function toggleHomeIndicator() {
 
 function toggleShowStars() {
     showStars = !showStars;
-    document.getElementById('show-stars-mode').textContent = showStars ? 'On' : 'Off';
     if (starField) starField.visible = showStars; // background real-sky starfield
-    updateZoomLevel(); // Re-evaluate visibility of named/distant stars
+    syncStarsMenu();
+}
+
+function toggleBigStars() {
+    showBigStars = !showBigStars;
+    updateZoomLevel(); // re-evaluate visibility of the named star systems
+    syncStarsMenu();
 }
 
 function toggleConstellations() {
     showConstellations = !showConstellations;
-    const constellationsModeText = document.getElementById('constellations-mode');
-    if (constellationsModeText) {
-        constellationsModeText.textContent = showConstellations ? 'On' : 'Off';
-    }
-    if (constellationsGroup) {
-        constellationsGroup.visible = showConstellations;
-    }
+    constellationIntro = null; // the user's choice wins over the intro
+    setConstellationOpacity(showConstellations ? 1 : 0);
+    syncStarsMenu();
+}
+
+// Fade constellation lines and labels (1 = normal look, 0 = hidden)
+function setConstellationOpacity(f) {
+    if (!constellationsGroup) return;
+    constellationsGroup.visible = f > 0.001;
+    constellationsGroup.traverse(o => {
+        if (!o.material) return;
+        o.material.userData.baseOpacity ??= o.material.opacity;
+        o.material.opacity = o.material.userData.baseOpacity * f;
+    });
+}
+
+function updateConstellationIntro() {
+    if (!constellationIntro || !constellationsGroup) return;
+    // Start timing when the scene is up and the constellations have loaded,
+    // not at script load (slow connections would eat into the 3 s delay)
+    constellationIntro.start ??= performance.now();
+    const { delay, fadeIn, fadeOut } = CONSTELLATION_INTRO;
+    const t = performance.now() - constellationIntro.start - delay;
+    let f = 0;
+    if (t > 0 && t < fadeIn) f = t / fadeIn;
+    else if (t >= fadeIn) f = 1 - Math.min(1, (t - fadeIn) / fadeOut);
+    setConstellationOpacity(f * f * (3 - 2 * f));
+    if (t >= fadeIn + fadeOut) constellationIntro = null; // ends off
+}
+
+// ── Stars menu (bottom bar) ─────────────────────────────────────────────
+function syncStarsMenu() {
+    const set = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
+    set('menu-background-stars', showStars);
+    set('menu-big-stars', showBigStars);
+    set('menu-constellations', showConstellations);
+    const locked = scaleMode === 'realistic';
+    document.querySelectorAll('input[name="star-scale"]').forEach(r => {
+        r.checked = r.value === effectiveStarScale();
+        r.disabled = locked;
+        r.closest('.popup-row')?.classList.toggle('disabled', locked);
+    });
+    const note = document.getElementById('star-scale-note');
+    if (note) note.hidden = !locked;
+    const summary = document.getElementById('stars-menu-summary');
+    if (summary) summary.textContent = STAR_SCALES[effectiveStarScale()].label.replace('Compressed ', '').replace(/[()]/g, '');
+}
+
+// Hover opens on devices with a mouse; click/tap toggles everywhere (phones)
+function setupPopupMenus() {
+    document.querySelectorAll('.popup-menu').forEach(menu => {
+        const button = menu.querySelector('.popup-menu-button');
+        const panel = menu.querySelector('.popup-menu-panel');
+        const setOpen = open => {
+            menu.classList.toggle('open', open);
+            button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
+        button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!menu.classList.contains('open')); });
+        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+            let closeTimer = null;
+            menu.addEventListener('mouseenter', () => { clearTimeout(closeTimer); setOpen(true); });
+            menu.addEventListener('mouseleave', () => { closeTimer = setTimeout(() => setOpen(false), 250); });
+        }
+        panel.addEventListener('click', e => e.stopPropagation());
+        document.addEventListener('click', () => setOpen(false));
+    });
+    document.getElementById('menu-background-stars')?.addEventListener('change', toggleShowStars);
+    document.getElementById('menu-big-stars')?.addEventListener('change', toggleBigStars);
+    document.getElementById('menu-constellations')?.addEventListener('change', toggleConstellations);
+    document.querySelectorAll('input[name="star-scale"]').forEach(r =>
+        r.addEventListener('change', () => { if (r.checked) setStarScale(r.value); }));
+    syncStarsMenu();
 }
 
 

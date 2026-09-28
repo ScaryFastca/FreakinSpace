@@ -118,3 +118,13 @@ I also completely revamped the animation timing to address the "slow start" feel
 - For short hops (e.g. Sun → Sirius), the animation uses a standard cubic ease-in, which launches the camera much faster.
 - For massive leaps (e.g. Earth → Stephenson), the animation retains the "slow reveal" (quintic/power-of-5 easing) to preserve the sense of scale.
 This hybrid approach eliminates the sluggish feeling for neighbors while keeping the dramatic cinematic effect for distant giants.
+
+
+Sep 28th 2026 - 16:25:00 GMT-04:00
+
+Request: Modify this space map so that clicking the ISS always moves the camera to above and behind it, pointing at it but up a bit to capture lots of the sky and stuff in the background. The view will need to rotate so up is in relation to the ISS.
+
+Result: Updated `focusOnBody` and the follow/animation loops in `js/main.js`:
+1. Configured local offset behind (-Z) and above (+Y) the ISS along with an upward/forward target offset so the camera frames the ISS in the lower view, tilted up toward the open sky and celestial background with Earth's curvature beneath.
+2. During the fly-to animation, the camera's up vector smoothly rotates to align with the ISS's live radial up vector (away from Earth), and the animation continuously tracks the ISS's real-time orbital motion and orientation.
+3. Automatically locks into chase cam mode (`On + angle`) upon arrival so the camera continues to travel behind and above the ISS as it orbits Earth, while still supporting mouse orbiting and zooming. Clicking the ISS at any time smoothly re-centers into this perspective.

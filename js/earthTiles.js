@@ -55,7 +55,19 @@ const MAX_CACHED = 500;
 // Tiles start below this altitude (Earth radii). Higher up, the 8K base map is
 // sharp enough, and the whole disk would need ~1500 z6 tiles; lower, the
 // view frustum limits coverage to a few dozen, so there's no patchy edge.
-const MAX_ALT = 0.4;
+const MAX_ALT = 30;
+// Tiles now cover the whole visible globe out to ~30 Earth radii (coarse z4
+// tiles far out: ~130 of them for a full disc). Before, they only started at
+// 0.4 R and the globe switched in one frame from the 8K base map's look (light
+// flat ocean) to Esri's (dark shaded ocean) — a visible flicker when zooming
+// through that height. Now the switch happens where Earth is a small disc.
+//
+// The night street map only suits close views ("CANADA" across a hemisphere
+// looks odd), so it fades in between these altitudes (Earth radii); further
+// out the night side shows city lights. The imagery-shaped city lights (sharp
+// up close) fade in over a similar range so far views match the base globe.
+const STREET_MAP_FADE = [0.5, 0.3];   // no street map above 0.5 R, full below 0.3 R
+const LIGHT_DETAIL_FADE = [1.0, 0.3];
 const MAX_MERC_LAT = 85.05112878;
 
 // key → { z, x, y, mesh, used, layers: { day?|night?|labels?: { state, tex } } },
@@ -88,15 +100,15 @@ export const tileLighting = {
     uAmbient: { value: 0.01 },
     uNightStrength: { value: 0 },
     nightMap: { value: BLACK },
-    uUseStreetMap: { value: 1 } // 0 = city lights on the night side at every zoom
+    uUseStreetMap: { value: 1 },  // street map share on the night side (altitude fade × style)
+    uLightDetail: { value: 1 }    // share of imagery-shaped city lights (close-up detail)
 };
 
 // Night-side style: 'map' (dark street map with labels) or 'lights' (the
 // globe's city lights). In 'lights' mode no street-map tiles are fetched.
 let nightStyle = 'map';
 export function setNightStyle(style) {
-    nightStyle = style;
-    tileLighting.uUseStreetMap.value = style === 'map' ? 1 : 0;
+    nightStyle = style; // applied per frame in updateEarthTiles (fades with altitude)
 }
 
 const TILE_VERTEX = /* glsl */`
@@ -132,6 +144,7 @@ const TILE_FRAGMENT = /* glsl */`
     uniform float uAmbient;
     uniform float uNightStrength;
     uniform float uUseStreetMap;
+    uniform float uLightDetail;
     varying vec2 vUv;
     varying vec2 vUv1;
     varying vec3 vNormalView;
@@ -159,16 +172,15 @@ const TILE_FRAGMENT = /* glsl */`
         // imagery underneath, so built-up areas and roads (bright in the
         // photo) glow while water, parks and fields stay dark.
         float lightDetail = 1.0;
-        if (uHasDay > 0.5) {
+        if (uHasDay > 0.5 && uLightDetail > 0.0) {
             float lum = dot(imagery, vec3(0.2126, 0.7152, 0.0722));
             // Steep curve + low ceiling: only the brightest built-up areas glow
-            lightDetail = mix(0.03, 0.55, pow(smoothstep(0.02, 0.3, lum), 1.5)) * (1.0 - ocean);
+            lightDetail = mix(1.0, mix(0.03, 0.55, pow(smoothstep(0.02, 0.3, lum), 1.5)) * (1.0 - ocean), uLightDetail);
         }
         vec3 cityLights = texture2D(nightMap, vUv1).rgb * uNightStrength * lightDetail;
         // Night: the street map, or city lights (by choice, or until it arrives)
-        vec3 nightColor = uHasNight > 0.5 && uUseStreetMap > 0.5
-            ? street
-            : day + cityLights;
+        vec3 nightColor = day + cityLights;
+        if (uHasNight > 0.5) nightColor = mix(nightColor, street, uUseStreetMap);
         gl_FragColor = vec4(mix(day, nightColor, night), 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -360,6 +372,11 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
         return;
     }
     root.visible = true;
+    const altR = camDist / R - 1;
+    const fade = ([from, to], a) => THREE.MathUtils.clamp((from - a) / (from - to), 0, 1);
+    const streetMix = nightStyle === 'map' ? fade(STREET_MAP_FADE, altR) : 0;
+    tileLighting.uUseStreetMap.value = streetMix;
+    tileLighting.uLightDetail.value = fade(LIGHT_DETAIL_FADE, altR);
     // Sun direction in Earth's frame (the Sun sits at the world origin)
     _sunLocal.set(0, 0, 0);
     earthMesh.worldToLocal(_sunLocal).normalize();
@@ -395,20 +412,23 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
         const sunAng = Math.acos(THREE.MathUtils.clamp(b.center.dot(_sunLocal), -1, 1));
         const sunlit = Math.cos(Math.max(0, sunAng - b.angRadius)) > DAY_IF_SUNDOT_ABOVE;
         const inNight = Math.cos(Math.min(Math.PI, sunAng + b.angRadius)) < NIGHT_IF_SUNDOT_BELOW;
-        const streetMap = nightStyle === 'map';
-        // City-lights mode: night tiles use the imagery too (the shader adds the
-        // globe's city lights on top), exactly like the globe further out
-        const needDay = sunlit || (inNight && !streetMap);
+        const streetMap = streetMix > 0;
+        // City lights (by choice, or too high for the street map): night tiles
+        // use the imagery too and the shader adds the globe's city lights. While
+        // the street map is fading in/out both are needed.
+        const needDay = sunlit || (inNight && streetMix < 1);
         // Past the street map's deepest zoom a night-only tile has nothing to
         // show, so its parent stays on screen (z16 is sharp enough for names)
         if (streetMap && inNight && !needDay && z > LAYERS.night.maxZ) return MISSING;
         const needNight = streetMap && inNight && z <= LAYERS.night.maxZ;
         if (needDay && layerState(entry, 'day') === 'error') return MISSING; // no imagery this deep
-        // Drawable once any needed layer is in: the shader stands in for a
-        // missing one (city lights for the map, the map for imagery), so the
-        // terminator sweeping over a tile doesn't bounce it back to its parent
+        // Draw only once every layer this tile needs is in. (Drawing as soon as
+        // any one was in let a coarse parent with imagery but no street map
+        // stand in, showing a square of city-lights shading inside the map.)
         const ready = l => layerState(entry, l) === 'ready';
-        const drawable = entry?.mesh && ((needDay && ready('day')) || (needNight && ready('night')));
+        const settled = l => ready(l) || layerState(entry, l) === 'error';
+        const drawable = entry?.mesh && (!needDay || settled('day')) && (!needNight || settled('night'))
+            && ((needDay && ready('day')) || (needNight && ready('night')));
         const prio = z * 1e3 + dist / R;
         const fetchMissing = () => {
             if (needDay && !layerState(entry, 'day')) wanted.push([prio, key, 'day', z, x, y]);
