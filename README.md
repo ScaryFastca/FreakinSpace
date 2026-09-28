@@ -8,6 +8,8 @@ largest stars known, with everything placed where it really is right now.
 
 <img width="2555" height="1279" alt="image" src="https://github.com/user-attachments/assets/af801bdc-6485-40a3-af9e-00bd2dd24e6c" />
 
+<img width="2276" height="1278" alt="image" src="https://github.com/user-attachments/assets/c74bf1c5-59c4-4da4-9abd-0bb1693c382e" />
+
 <img width="2277" height="1275" alt="image" src="https://github.com/user-attachments/assets/6f4cade7-b7b4-46cf-8109-84be901ae97f" />
 
 <img width="1729" height="980" alt="image" src="https://github.com/user-attachments/assets/f3b8f177-edea-46fa-a14f-9dc3bc3ce2cb" />
