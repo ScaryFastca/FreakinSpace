@@ -6,6 +6,17 @@ largest stars known, with everything placed where it really is right now.
 
 **[Try it live →](https://scaryfast.ca/space/)**
 
+<img width="2555" height="1279" alt="image" src="https://github.com/user-attachments/assets/af801bdc-6485-40a3-af9e-00bd2dd24e6c" />
+
+<img width="2555" height="1278" alt="image" src="https://github.com/user-attachments/assets/0d76fd63-097a-45df-9461-5752ec3e30c2" />
+
+<img width="2277" height="1275" alt="image" src="https://github.com/user-attachments/assets/6f4cade7-b7b4-46cf-8109-84be901ae97f" />
+
+<img width="1729" height="980" alt="image" src="https://github.com/user-attachments/assets/f3b8f177-edea-46fa-a14f-9dc3bc3ce2cb" />
+
+<img width="2279" height="1276" alt="image" src="https://github.com/user-attachments/assets/ca8d0117-7252-4f27-b8ca-e91fab9122d1" />
+
+
 Built with [Three.js](https://threejs.org/) and plain JavaScript: no build step,
 no framework, no account.
 
