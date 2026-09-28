@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=12">
+    <link rel="stylesheet" href="css/styles.css?v=13">
     <script type="importmap">
     {
         "imports": {
@@ -51,6 +51,9 @@
             </div>
             <div class="control-hint">
                 <span class="key">Scroll</span> to zoom in & out
+            </div>
+            <div class="control-hint">
+                <span class="key">Ctrl+Drag</span> to roll the view
             </div>
             <div class="control-hint">
                 <span class="key">Click</span> an object to focus
@@ -109,6 +112,10 @@
                 <span class="toggle-label">Satellites:</span>
                 <span id="satellites-mode">On</span>
             </button>
+            <button id="night-view-toggle" class="toggle-btn" title="What Earth's night side shows when you zoom in close">
+                <span class="toggle-label">Night view:</span>
+                <span id="night-view-mode">Street map</span>
+            </button>
             <button id="home-indicator-toggle" class="toggle-btn">
                 <span class="toggle-label">Home Arrow:</span>
                 <span id="home-indicator-mode">Off</span>
@@ -157,6 +164,24 @@
 
         <button id="info-button" class="hidden" title="About SpaceMap">i</button>
 
+        <!-- View orientation: compass (click = north up) and level horizon -->
+        <div id="view-orientation">
+            <button id="compass-btn" title="North up (Ctrl + drag to rotate the view)" aria-label="North up">
+                <svg id="compass-needle" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <polygon points="12,2 16,12 12,10.5 8,12" fill="#ff5a5a"/>
+                    <polygon points="12,22 16,12 12,13.5 8,12" fill="#cce0ff"/>
+                    <text x="12" y="8.6" text-anchor="middle" font-size="5" fill="#fff" font-family="sans-serif">N</text>
+                </svg>
+            </button>
+            <button id="level-horizon-btn" hidden title="Level the horizon (the selected object's up)" aria-label="Level horizon">
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <path d="M3 15h18" stroke="#cce0ff" stroke-width="2" stroke-linecap="round"/>
+                    <path d="M7 15a5 5 0 0 1 10 0" fill="none" stroke="#ffcc66" stroke-width="2"/>
+                    <path d="M12 3v5M9.5 5.5 12 3l2.5 2.5" fill="none" stroke="#cce0ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
+
         <div id="timeline-panel" class="hidden">
             <!-- Date display, picker button, and Now button all on one line -->
             <div id="tl-date-row">
@@ -169,11 +194,11 @@
             <!-- Playback buttons on the left, speed slider on the right -->
             <div id="tl-controls-slider-row">
                 <div id="timeline-controls">
-                    <button id="tl-reverse-fast" class="tl-btn" title="Rewind Fast (Double Notch)">⏮</button>
-                    <button id="tl-reverse" class="tl-btn" title="Rewind Notch">◀</button>
+                    <button id="tl-reverse-fast" class="tl-btn" title="Much slower: 4 steps (continues into reverse)">⏪</button>
+                    <button id="tl-reverse" class="tl-btn tl-step" title="Slower: 1 step (continues into reverse)">−</button>
                     <button id="tl-play-pause" class="tl-btn tl-play" title="Play / Pause">▶</button>
-                    <button id="tl-forward" class="tl-btn" title="Forward Notch">▶▶</button>
-                    <button id="tl-forward-fast" class="tl-btn" title="Forward Fast (Double Notch)">⏭</button>
+                    <button id="tl-forward" class="tl-btn tl-step" title="Faster: 1 step">+</button>
+                    <button id="tl-forward-fast" class="tl-btn" title="Much faster: 4 steps">⏩</button>
                 </div>
                 
                 <div id="tl-speed-slider-row">
@@ -182,6 +207,17 @@
                     <input type="range" id="tl-speed-slider" min="-100" max="100" value="0" step="1" title="Adjust speed & direction">
                     <span class="tl-slider-label">Forward</span>
                 </div>
+            </div>
+
+            <!-- One-click speeds (keep the current direction) -->
+            <div id="tl-presets">
+                <button class="tl-btn tl-preset" data-sps="1">Real time</button>
+                <button class="tl-btn tl-preset" data-sps="60">1 min/s</button>
+                <button class="tl-btn tl-preset" data-sps="3600">1 hr/s</button>
+                <button class="tl-btn tl-preset" data-sps="86400">1 day/s</button>
+                <button class="tl-btn tl-preset" data-sps="604800">1 wk/s</button>
+                <button class="tl-btn tl-preset" data-sps="2592000">1 mo/s</button>
+                <button class="tl-btn tl-preset" data-sps="31536000">1 yr/s</button>
             </div>
         </div>
 
@@ -215,6 +251,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=55"></script>
+    <script type="module" src="js/main.js?v=79"></script>
 </body>
 </html>

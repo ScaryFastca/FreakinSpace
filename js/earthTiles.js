@@ -1,13 +1,45 @@
-// Streaming satellite imagery for Earth close-ups. A quadtree of Web-Mercator
-// tiles (Esri World Imagery) is draped over the globe as curved patches,
-// children of the Earth mesh so they spin with it. Only levels sharper than
-// the 8K base texture (z ≥ MIN_RENDER_Z) are drawn; below that the base globe
-// shows through.
+// Streaming map tiles for Earth close-ups. A quadtree of Web-Mercator tiles is
+// draped over the globe as curved patches, children of the Earth mesh so they
+// spin with it. Each tile has two layers: satellite imagery (Esri World
+// Imagery) for the day side and a dark street map with labels (Esri Dark Gray
+// Canvas, base + transparent label overlay) for the night side, where imagery
+// is just black.
+// A tile only fetches the layers for the side(s) of the terminator it's on,
+// and the shader blends them across the twilight band.
 import * as THREE from 'three';
 
-const TILE_URL = (z, x, y) =>
-    `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}?blankTile=false`; // 404 instead of a "no data" placeholder
-const ATTRIBUTION = 'Powered by Esri · Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+const LAYERS = {
+    day: {
+        // blankTile=false: 404 instead of a "no data" placeholder (open ocean etc.)
+        url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}?blankTile=false`,
+        credit: 'Powered by Esri · Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+    },
+    // Keyless dark street map. (CARTO Dark Matter now watermarks browser
+    // requests with "API key required".) Canvas services stop at z16.
+    night: {
+        url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/${z}/${y}/${x}`,
+        credit: 'Map: Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community',
+        maxZ: 16
+    },
+    labels: {
+        url: (z, x, y) => `https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/${z}/${y}/${x}`,
+        credit: null, // covered by the night credit
+        maxZ: 16
+    }
+};
+// Must match the shader's twilight smoothstep(0.1, -0.15, sunDot), widened a
+// little so tiles have their layer before the terminator reaches them
+const DAY_IF_SUNDOT_ABOVE = -0.2;
+const NIGHT_IF_SUNDOT_BELOW = 0.15;
+// Esri renders open ocean darker the further you zoom in (mean blue, sRGB:
+// z4 74 → z8 50 → z11 37, measured over six oceans), so wherever tiles of
+// different zoom meet, the sea shows light/dark squares that never go away.
+// Water pixels are scaled toward the z8 look; gains are linear-light ratios,
+// (50.2 / blue_z)^2.2, and land/cloud pixels are left alone (see shader).
+const OCEAN_GAIN_BY_Z = { 4: 0.43, 5: 0.47, 6: 0.48, 7: 0.70, 8: 1, 9: 1.34, 10: 1.65, 11: 1.91 };
+const oceanGainFor = z => OCEAN_GAIN_BY_Z[z] ?? (z < 4 ? 0.43 : 1.85); // z12+ is a flat fill ≈ z11
+const NIGHT_MAP_GAIN = 0.9;  // keep the dark-grey map dark after tone mapping
+const LABEL_GAIN = 1.6;     // keep street names legible after tone mapping
 
 const ROOT_Z = 2;
 // Draw from z4 even though the 8K base map is about as sharp: Esri's colours
@@ -18,7 +50,7 @@ const ROOT_Z = 2;
 const MIN_RENDER_Z = 4;
 const MAX_Z = 17;         // Esri has gaps beyond this in rural areas
 const SPLIT = 0.45;       // split when tile size / camera distance exceeds this
-const MAX_INFLIGHT = 8;
+const MAX_INFLIGHT = 10;
 const MAX_CACHED = 500;
 // Tiles start below this altitude (Earth radii). Higher up, the 8K base map is
 // sharp enough, and the whole disk would need ~1500 z6 tiles; lower, the
@@ -26,14 +58,16 @@ const MAX_CACHED = 500;
 const MAX_ALT = 0.4;
 const MAX_MERC_LAT = 85.05112878;
 
-const cache = new Map();   // key → { z, x, y, mesh, texture, state: 'loading'|'ready'|'error', used }
+// key → { z, x, y, mesh, used, layers: { day?|night?|labels?: { state, tex } } },
+// layer state: 'loading' | 'ready' | 'error'
+const cache = new Map();
 // Decode tile JPEGs off the main thread (createImageBitmap). ImageBitmaps
 // ignore texture.flipY, so the flip is done at decode time instead.
 const loader = new THREE.ImageBitmapLoader();
 loader.setOptions({ imageOrientation: 'flipY' });
 loader.setCrossOrigin('anonymous');
 const MAX_BUILDS_PER_FRAME = 4; // spread GPU uploads out when many tiles land at once
-const readyQueue = [];          // decoded tiles waiting for a mesh
+const readyQueue = [];          // decoded layers waiting to be attached: { key, entry, layer, R }
 let root = null;
 let attributionEl = null;
 let inflight = 0;
@@ -53,8 +87,17 @@ export const tileLighting = {
     uSunIntensity: { value: 3.5 },
     uAmbient: { value: 0.01 },
     uNightStrength: { value: 0 },
-    nightMap: { value: BLACK }
+    nightMap: { value: BLACK },
+    uUseStreetMap: { value: 1 } // 0 = city lights on the night side at every zoom
 };
+
+// Night-side style: 'map' (dark street map with labels) or 'lights' (the
+// globe's city lights). In 'lights' mode no street-map tiles are fetched.
+let nightStyle = 'map';
+export function setNightStyle(style) {
+    nightStyle = style;
+    tileLighting.uUseStreetMap.value = style === 'map' ? 1 : 0;
+}
 
 const TILE_VERTEX = /* glsl */`
     #include <common>
@@ -74,23 +117,59 @@ const TILE_VERTEX = /* glsl */`
 const TILE_FRAGMENT = /* glsl */`
     #include <common>
     #include <logdepthbuf_pars_fragment>
-    uniform sampler2D map;
+    uniform sampler2D dayMap;
+    uniform sampler2D streetMap;
+    uniform float uHasDay;
+    uniform float uOceanGain;
+    uniform float uHasNight;
+    uniform float uStreetGain;
+    uniform sampler2D labelMap;
+    uniform float uHasLabels;
+    uniform float uLabelGain;
     uniform sampler2D nightMap;
     uniform vec3 uSunDirView;
     uniform float uSunIntensity;
     uniform float uAmbient;
     uniform float uNightStrength;
+    uniform float uUseStreetMap;
     varying vec2 vUv;
     varying vec2 vUv1;
     varying vec3 vNormalView;
     void main() {
         #include <logdepthbuf_fragment>
         float sunDot = dot(normalize(vNormalView), uSunDirView);
-        // Lambert, matching MeshStandardMaterial's albedo / PI scaling
-        vec3 color = texture2D(map, vUv).rgb * RECIPROCAL_PI * (uSunIntensity * max(sunDot, 0.0) + uAmbient);
-        // Same terminator blend as the globe's night lights
-        color += texture2D(nightMap, vUv1).rgb * smoothstep(0.1, -0.15, sunDot) * uNightStrength;
-        gl_FragColor = vec4(color, 1.0);
+        float night = smoothstep(0.1, -0.15, sunDot); // same twilight band as the globe
+        vec3 street = texture2D(streetMap, vUv).rgb * uStreetGain;
+        if (uHasLabels > 0.5) {
+            vec4 label = texture2D(labelMap, vUv);
+            street = mix(street, label.rgb * uLabelGain, label.a);
+        }
+        // Day: Lambert-lit imagery, matching MeshStandardMaterial's albedo / PI
+        // scaling. If the imagery isn't loaded, show the street map instead.
+        vec3 imagery = texture2D(dayMap, vUv).rgb;
+        // Deep water has almost no red and is clearly blue; land, cloud and ice
+        // have plenty of red. Only water gets the per-zoom brightness match.
+        float ocean = (1.0 - smoothstep(0.004, 0.02, imagery.r)) * step(imagery.r * 3.0, imagery.b);
+        imagery *= mix(1.0, uOceanGain, ocean);
+        vec3 day = uHasDay > 0.5
+            ? imagery * RECIPROCAL_PI * (uSunIntensity * max(sunDot, 0.0) + uAmbient)
+            : street;
+        // City lights come from the globe's 8K night map, ~5 km per pixel: up
+        // close a whole city is one flat glow. Shape it with the daytime
+        // imagery underneath, so built-up areas and roads (bright in the
+        // photo) glow while water, parks and fields stay dark.
+        float lightDetail = 1.0;
+        if (uHasDay > 0.5) {
+            float lum = dot(imagery, vec3(0.2126, 0.7152, 0.0722));
+            // Steep curve + low ceiling: only the brightest built-up areas glow
+            lightDetail = mix(0.03, 0.55, pow(smoothstep(0.02, 0.3, lum), 1.5)) * (1.0 - ocean);
+        }
+        vec3 cityLights = texture2D(nightMap, vUv1).rgb * uNightStrength * lightDetail;
+        // Night: the street map, or city lights (by choice, or until it arrives)
+        vec3 nightColor = uHasNight > 0.5 && uUseStreetMap > 0.5
+            ? street
+            : day + cityLights;
+        gl_FragColor = vec4(mix(day, nightColor, night), 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
     }`;
@@ -102,6 +181,7 @@ const _world = new THREE.Vector3();
 const _frustum = new THREE.Frustum();
 const _projScreen = new THREE.Matrix4();
 const _sphere = new THREE.Sphere();
+const _sunLocal = new THREE.Vector3();
 
 // Same lat/lon → Earth-local convention as updateUserMarker() in main.js
 function dirFromLatLon(latDeg, lonDeg, out) {
@@ -125,7 +205,7 @@ function tileBounds(z, x, y) {
     return { center, angRadius: Math.acos(Math.min(1, minDot)) };
 }
 
-function buildTileMesh(z, x, y, R, texture) {
+function buildTileMesh(z, x, y, R) {
     const N = z < 6 ? 32 : z < 9 ? 16 : 8; // coarse tiles span up to 22°; keep chord sag (and lift) small
     const spanRad = THREE.MathUtils.degToRad(360 / 2 ** z) / N;
     // Lift above the base sphere: cover this patch's own chord sag, plus the
@@ -165,7 +245,14 @@ function buildTileMesh(z, x, y, R, texture) {
     geo.computeVertexNormals();
 
     const material = new THREE.ShaderMaterial({
-        uniforms: { map: { value: texture }, ...tileLighting },
+        uniforms: {
+            dayMap: { value: BLACK }, streetMap: { value: BLACK },
+            uHasDay: { value: 0 }, uHasNight: { value: 0 },
+            uOceanGain: { value: oceanGainFor(z) },
+            uStreetGain: { value: NIGHT_MAP_GAIN },
+            labelMap: { value: BLACK }, uHasLabels: { value: 0 }, uLabelGain: { value: LABEL_GAIN },
+            ...tileLighting
+        },
         vertexShader: TILE_VERTEX,
         fragmentShader: TILE_FRAGMENT
     });
@@ -177,11 +264,18 @@ function buildTileMesh(z, x, y, R, texture) {
     return mesh;
 }
 
-function requestTile(key, z, x, y, R) {
-    const entry = { z, x, y, mesh: null, texture: null, state: 'loading', used: frame };
-    cache.set(key, entry);
+const layerState = (entry, layer) => entry?.layers[layer]?.state;
+const isLoading = entry => Object.values(entry.layers).some(l => l.state === 'loading');
+
+function requestLayer(key, layer, z, x, y, R) {
+    let entry = cache.get(key);
+    if (!entry) {
+        entry = { z, x, y, mesh: null, used: frame, layers: {} };
+        cache.set(key, entry);
+    }
+    const slot = entry.layers[layer] = { state: 'loading', tex: null };
     inflight++;
-    loader.load(TILE_URL(z, x, y), bitmap => {
+    loader.load(LAYERS[layer].url(z, x, y), bitmap => {
         inflight--;
         if (cache.get(key) !== entry) { bitmap.close(); return; } // evicted meanwhile
         const tex = new THREE.Texture(bitmap);
@@ -189,39 +283,41 @@ function requestTile(key, z, x, y, R) {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = maxAnisotropy;
         tex.needsUpdate = true;
-        entry.texture = tex;
-        readyQueue.push({ key, entry, R });
+        slot.tex = tex;
+        readyQueue.push({ key, entry, layer, R });
     }, undefined, () => {
         inflight--;
-        entry.state = 'error';
+        slot.state = 'error';
     });
 }
 
 function evict() {
     if (cache.size <= MAX_CACHED) return;
-    const old = [...cache].filter(([, e]) => e.used < frame && e.state !== 'loading').sort((a, b) => a[1].used - b[1].used);
+    const old = [...cache].filter(([, e]) => e.used < frame && !isLoading(e)).sort((a, b) => a[1].used - b[1].used);
     for (const [key, e] of old.slice(0, cache.size - MAX_CACHED)) {
         if (e.mesh) {
             root.remove(e.mesh);
             e.mesh.geometry.dispose();
             e.mesh.material.dispose();
         }
-        if (e.texture) {
-            e.texture.dispose();
-            e.texture.image?.close?.(); // free the decoded ImageBitmap
+        for (const slot of Object.values(e.layers)) {
+            if (!slot.tex) continue;
+            slot.tex.dispose();
+            slot.tex.image?.close?.(); // free the decoded ImageBitmap
         }
         cache.delete(key);
     }
 }
 
-function setAttribution(show) {
+function setAttribution(layersShown) {
     if (!attributionEl) {
         attributionEl = document.createElement('div');
         attributionEl.id = 'imagery-attribution';
-        attributionEl.textContent = ATTRIBUTION;
         document.body.appendChild(attributionEl);
     }
-    attributionEl.classList.toggle('visible', show);
+    const text = [...layersShown].map(l => LAYERS[l].credit).filter(Boolean).join(' · ');
+    if (attributionEl.textContent !== text) attributionEl.textContent = text;
+    attributionEl.classList.toggle('visible', layersShown.size > 0);
 }
 
 function hideAll() {
@@ -240,11 +336,18 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
     if (root.parent !== earthMesh) earthMesh.add(root);
 
     for (let i = 0; i < MAX_BUILDS_PER_FRAME && readyQueue.length; i++) {
-        const { key, entry, R: r } = readyQueue.shift();
+        const { key, entry, layer, R: r } = readyQueue.shift();
         if (cache.get(key) !== entry) continue; // evicted while queued (texture already freed)
-        entry.mesh = buildTileMesh(entry.z, entry.x, entry.y, r, entry.texture);
-        root.add(entry.mesh);
-        entry.state = 'ready';
+        if (!entry.mesh) {
+            entry.mesh = buildTileMesh(entry.z, entry.x, entry.y, r);
+            root.add(entry.mesh);
+        }
+        const slot = entry.layers[layer];
+        const u = entry.mesh.material.uniforms;
+        if (layer === 'day') { u.dayMap.value = slot.tex; u.uHasDay.value = 1; }
+        else if (layer === 'night') { u.streetMap.value = slot.tex; u.uHasNight.value = 1; }
+        else { u.labelMap.value = slot.tex; u.uHasLabels.value = 1; }
+        slot.state = 'ready';
     }
 
     const R = earthMesh.userData.visualRadius || 1;
@@ -253,16 +356,19 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
     const camDist = _camLocal.length();
     if (!enabled || camDist > R * (1 + MAX_ALT)) {
         root.visible = false;
-        setAttribution(false);
+        setAttribution(new Set());
         return;
     }
     root.visible = true;
+    // Sun direction in Earth's frame (the Sun sits at the world origin)
+    _sunLocal.set(0, 0, 0);
+    earthMesh.worldToLocal(_sunLocal).normalize();
     _camDir.copy(_camLocal).normalize();
     const horizonAng = Math.acos(Math.min(1, R / camDist));
     _projScreen.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     _frustum.setFromProjectionMatrix(_projScreen);
 
-    const wanted = [];   // unloaded tiles to fetch: [priority, key, z, x, y]
+    const wanted = [];   // layers to fetch: [priority, key, layer, z, x, y]
     const show = [];     // meshes to display this frame
 
     // Subtree states: READY = fully drawable from loaded tiles (or nothing
@@ -283,13 +389,43 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
         const key = `${z}/${x}/${y}`;
         const entry = cache.get(key);
         if (entry) entry.used = frame;
-        if (entry?.state === 'error') return MISSING; // don't look deeper either
+
+        // Which layers this tile needs: day if any of it is sunlit, night if
+        // any of it is past the twilight band
+        const sunAng = Math.acos(THREE.MathUtils.clamp(b.center.dot(_sunLocal), -1, 1));
+        const sunlit = Math.cos(Math.max(0, sunAng - b.angRadius)) > DAY_IF_SUNDOT_ABOVE;
+        const inNight = Math.cos(Math.min(Math.PI, sunAng + b.angRadius)) < NIGHT_IF_SUNDOT_BELOW;
+        const streetMap = nightStyle === 'map';
+        // City-lights mode: night tiles use the imagery too (the shader adds the
+        // globe's city lights on top), exactly like the globe further out
+        const needDay = sunlit || (inNight && !streetMap);
+        // Past the street map's deepest zoom a night-only tile has nothing to
+        // show, so its parent stays on screen (z16 is sharp enough for names)
+        if (streetMap && inNight && !needDay && z > LAYERS.night.maxZ) return MISSING;
+        const needNight = streetMap && inNight && z <= LAYERS.night.maxZ;
+        if (needDay && layerState(entry, 'day') === 'error') return MISSING; // no imagery this deep
+        // Drawable once any needed layer is in: the shader stands in for a
+        // missing one (city lights for the map, the map for imagery), so the
+        // terminator sweeping over a tile doesn't bounce it back to its parent
+        const ready = l => layerState(entry, l) === 'ready';
+        const drawable = entry?.mesh && ((needDay && ready('day')) || (needNight && ready('night')));
+        const prio = z * 1e3 + dist / R;
+        const fetchMissing = () => {
+            if (needDay && !layerState(entry, 'day')) wanted.push([prio, key, 'day', z, x, y]);
+            if (needNight && !layerState(entry, 'night')) wanted.push([prio, key, 'night', z, x, y]);
+            if (needNight && !layerState(entry, 'labels')) wanted.push([prio + 0.5, key, 'labels', z, x, y]);
+        };
+        const draw = o => {
+            o.push(entry.mesh);
+            if (needDay) layersShown.add('day');
+            if (needNight) layersShown.add('night');
+        };
 
         const split = z < MAX_Z && (z < MIN_RENDER_Z || size / dist > SPLIT);
         if (!split) {
             if (z < MIN_RENDER_Z) return READY;
-            if (entry?.state === 'ready') { out.push(entry.mesh); return READY; }
-            if (!entry) wanted.push([z * 1e3 + dist / R, key, z, x, y]);
+            fetchMissing();
+            if (drawable) { draw(out); return READY; }
             return PENDING;
         }
 
@@ -307,23 +443,26 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
         if (!pending && !missing) { out.push(...childOut); return READY; }
         // Draw this tile in place of its children until they're all loaded
         // (so zooming sharpens in place), or for good if some don't exist
-        if (z >= MIN_RENDER_Z && entry?.state === 'ready') { out.push(entry.mesh); return READY; }
-        if (z >= MIN_RENDER_Z && !entry) wanted.push([z * 1e3 + dist / R, key, z, x, y]);
+        if (z >= MIN_RENDER_Z) {
+            fetchMissing();
+            if (drawable) { draw(out); return READY; }
+        }
         out.push(...childOut);
         return pending ? PENDING : MISSING;
     }
 
+    const layersShown = new Set();
     const n = 2 ** ROOT_Z;
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) visit(ROOT_Z, x, y, show);
 
     hideAll();
     for (const m of show) m.visible = true;
-    setAttribution(show.length > 0);
+    setAttribution(layersShown);
 
     wanted.sort((a, b) => a[0] - b[0]);
-    for (const [, key, z, x, y] of wanted) {
+    for (const [, key, layer, z, x, y] of wanted) {
         if (inflight >= MAX_INFLIGHT) break;
-        requestTile(key, z, x, y, R);
+        requestLayer(key, layer, z, x, y, R);
     }
     evict();
 }

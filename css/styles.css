@@ -850,7 +850,11 @@ body {
     pointer-events: auto;
     display: flex;
     flex-direction: row;
-    gap: 10px;
+    flex-wrap: wrap;          /* narrow windows: wrap; the time panel follows (--settings-row-height) */
+    justify-content: center;
+    width: max-content;
+    max-width: calc(100vw - 40px);
+    gap: 8px 10px;
 }
 
 .toggle-btn {
@@ -858,9 +862,10 @@ body {
     backdrop-filter: blur(10px);
     border: 1px solid rgba(74, 158, 255, 0.4);
     border-radius: 20px;
-    padding: 10px 20px;
+    padding: 9px 16px;
     color: #fff;
     font-size: 0.85rem;
+    white-space: nowrap; /* one line per button, so values like "On + Starlink" don't grow the row */
     cursor: pointer;
     transition: all 0.3s ease;
     display: flex;
@@ -1151,7 +1156,7 @@ body {
 
 #timeline-panel {
     position: absolute;
-    bottom: 70px; /* above the toggle-buttons row at bottom: 20px */
+    bottom: calc(30px + var(--settings-row-height, 40px)); /* 10px above the settings row (bottom: 20px) */
     left: 50%;
     transform: translateX(-50%);
     background: rgba(0, 10, 30, 0.88);
@@ -1212,11 +1217,37 @@ body {
     border-color: rgba(74, 158, 255, 0.6);
     font-size: 1.05rem;
     padding: 5px 14px;
+    width: 46px; /* ▶ and ⏸ differ in width; keep the panel from shifting */
 }
 
 .tl-now-btn {
     font-size: 0.8rem;
     padding: 5px 12px;
+}
+
+.tl-step {
+    font-size: 1.15rem;
+    font-weight: 600;
+    min-width: 38px;
+}
+
+#tl-presets {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 5px;
+}
+
+.tl-preset {
+    font-size: 0.75rem;
+    padding: 3px 9px;
+    white-space: nowrap;
+}
+
+.tl-preset.active {
+    background: rgba(255, 170, 136, 0.25);
+    border-color: rgba(255, 170, 136, 0.8);
+    color: #fff;
 }
 
 #tl-controls-slider-row {
@@ -1239,6 +1270,14 @@ body {
     color: #ffaa88;
     user-select: none;
     white-space: nowrap;
+}
+
+/* Fixed width, one line: a changing readout mustn't resize the panel mid-recording */
+#tl-speed-label {
+    white-space: nowrap;
+    min-width: 6.6em; /* fits the longest readout, "-243 days/s" */
+    text-align: right;
+    font-variant-numeric: tabular-nums;
 }
 
 #tl-speed-slider {
@@ -1528,6 +1567,8 @@ body {
         width: 100%;
         transform: translateY(110%);
         flex-direction: column;
+        flex-wrap: nowrap;   /* scrolling sheet; desktop's wrap would split it into columns */
+        max-width: none;
         gap: 8px;
         background: rgba(0, 5, 15, 0.95);
         backdrop-filter: blur(15px);
@@ -1611,6 +1652,18 @@ body {
         align-items: center !important;
         gap: 6px !important;
         flex: 1 !important;
+        min-width: 0 !important; /* let the slider shrink instead of overflowing the screen */
+    }
+
+    #tl-speed-slider {
+        min-width: 0 !important;
+        width: 100% !important;
+    }
+
+    #timeline-controls .tl-step,
+    #timeline-controls .tl-play {
+        min-width: 0 !important;
+        width: auto !important;
     }
 
     .tl-slider-label {
@@ -1958,4 +2011,38 @@ body {
 #satellites-toggle.has-warning::after {
     content: ' \26A0';
     color: #ffb347;
+}
+
+/* View orientation buttons, top left under the title (the right side is
+   taken by the info card) */
+#view-orientation {
+    position: fixed;
+    top: 110px;
+    left: 20px;
+    display: flex;
+    gap: 8px;
+    z-index: 40;
+    pointer-events: auto;
+}
+#view-orientation button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(0, 20, 40, 0.9);
+    border: 1px solid rgba(74, 158, 255, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    cursor: pointer;
+}
+#view-orientation button:hover {
+    border-color: rgba(74, 158, 255, 0.8);
+    box-shadow: 0 0 12px rgba(74, 158, 255, 0.4);
+}
+#view-orientation button[hidden] { display: none; }
+#compass-needle { transition: transform 0.08s linear; }
+
+@media (max-width: 768px), (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+    #view-orientation { left: 12px; top: 96px; }
 }

@@ -1,13 +1,13 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=55';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=79';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=55';
-import { updateEarthTiles, tileLighting } from './earthTiles.js?v=55';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=55';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=79';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=79';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=79';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=55';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=55';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=79';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=79';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -500,40 +500,35 @@ function formatSimRate(daysPerSec) {
     return fmt(d * 86400, 'sec');
 }
 
-// Mouse wheel over the speed slider: fine, logarithmic speed control.
-// Each wheel notch (deltaY ≈ 100) scales speed by WHEEL_SPEED_FACTOR; trackpads
-// scale smoothly. Going slower than real time pauses; further reverses.
-const WHEEL_SPEED_FACTOR = 1.25;
-const MIN_DAYS_PER_SEC = 1 / 86400; // real time
-const MAX_DAYS_PER_SEC = 365;
-let wheelPauseAccum = 0;
+// Speed ladder, in seconds of simulated time per real second. Scroll notches
+// and the −/+ buttons move one rung: pause → 20 s/s, doubling up to 1 yr/s,
+// and the same rungs in reverse past pause. Presets (tl-presets) can land
+// between rungs; stepping from there goes to the next rung in that direction.
+const SECONDS_PER_YEAR = 365 * 86400;
+const SPEED_LADDER_SPS = (() => {
+    const rungs = [];
+    for (let sps = 20; sps < SECONDS_PER_YEAR; sps *= 2) rungs.push(sps);
+    rungs.push(SECONDS_PER_YEAR);
+    return rungs;
+})();
+const SIGNED_SPEED_LADDER = [...SPEED_LADDER_SPS.map(v => -v).reverse(), 0, ...SPEED_LADDER_SPS];
 
-function adjustSpeedByWheel(deltaY) {
-    const steps = -deltaY / 100; // wheel up = faster forward
-    let d = simPaused ? 0 : getSimulationRate() / MS_PER_DAY;
+function currentSimSps() {
+    return simPaused ? 0 : getSimulationRate() / 1000; // rate is sim-ms per real second
+}
 
-    if (d === 0) {
-        // Require a full notch while paused so a trackpad doesn't flick straight through
-        wheelPauseAccum += steps;
-        if (Math.abs(wheelPauseAccum) < 1) return;
-        d = Math.sign(wheelPauseAccum) * MIN_DAYS_PER_SEC;
-        wheelPauseAccum = 0;
-    } else {
-        d *= Math.pow(WHEEL_SPEED_FACTOR, Math.sign(d) * steps);
-        if (Math.abs(d) < MIN_DAYS_PER_SEC * 0.999) d = 0;
-        d = Math.max(-MAX_DAYS_PER_SEC, Math.min(MAX_DAYS_PER_SEC, d));
-    }
-
-    if (d === 0) {
+function setSimRateSps(sps) {
+    if (sps === 0) {
         simPaused = true;
     } else {
         simPaused = false;
-        timeScale = d;
-        simSpeed = d * MS_PER_DAY;
+        timeScale = sps / 86400;          // aligned mode: days per second
+        simSpeed = timeScale * MS_PER_DAY; // realistic mode: sim-ms per second
     }
     // Move the slider thumb to the closest matching position (display only)
     const slider = document.getElementById('tl-speed-slider');
     if (slider) {
+        const d = sps / 86400;
         let best = 0, bestDiff = Infinity;
         for (let val = -100; val <= 100; val++) {
             const diff = Math.abs(mapSliderToRealisticSpeed(val) / MS_PER_DAY - d);
@@ -544,8 +539,27 @@ function adjustSpeedByWheel(deltaY) {
     syncTimelineUI();
 }
 
-// Speed notches for timeline controls
-const SPEED_NOTCHES = [-100, -64, -32, -16, -8, -4, -2, -1.5, -1, -0.5, -0.1, 0, 0.1, 0.5, 1, 1.5, 2, 4, 8, 16, 32, 64, 100];
+function stepSimSpeed(steps) {
+    let sps = currentSimSps();
+    const dir = Math.sign(steps);
+    for (let i = 0; i < Math.abs(steps); i++) {
+        const tol = Math.abs(sps) * 1e-6 + 1e-9;
+        const next = dir > 0
+            ? SIGNED_SPEED_LADDER.find(v => v > sps + tol)
+            : SIGNED_SPEED_LADDER.findLast(v => v < sps - tol);
+        if (next === undefined) break;
+        sps = next;
+    }
+    setSimRateSps(sps);
+}
+
+function updateSpeedPresetHighlight() {
+    const sps = Math.abs(currentSimSps());
+    document.querySelectorAll('.tl-preset').forEach(btn => {
+        const target = Number(btn.dataset.sps);
+        btn.classList.toggle('active', sps > 0 && Math.abs(sps - target) < target * 1e-6);
+    });
+}
 
 function getCurrentSpeedMultiplier() {
     if (simPaused) return 0;
@@ -599,6 +613,248 @@ function setSpeedMultiplier(multiplier) {
 // Camera fly-to animation state
 let flyToAnimation = null;
 let isCameraLocked = true; // Default: camera moves with object
+// Third follow state ("On + angle"): the camera also keeps its viewing angle
+// *relative to the object*, turning with it (a chase cam). The offset is stored
+// in the object's local frame and re-applied each frame; whatever the user
+// drags or zooms becomes the new stored offset, so letting go re-locks there.
+let cameraAngleLock = false;
+const chaseCam = { active: false, bodyName: null, offsetLocal: new THREE.Vector3(), upLocal: new THREE.Vector3(0, 1, 0), hasOffset: false };
+const _chaseQuat = new THREE.Quaternion();
+const _chaseVec = new THREE.Vector3();
+const _chaseSph = new THREE.Spherical();
+
+// Focus hand-off without moving the camera: the look-at point glides from the
+// old target to the new body (and the camera's roll eases to match), so e.g.
+// following the ISS you can switch to Earth and scroll straight down into it,
+// instead of flying out to Earth's default framing.
+let focusRetarget = null;
+const FOCUS_RETARGET_MS = 700;
+const _retargetVec = new THREE.Vector3();
+
+function retargetFocus(name) {
+    const body = celestialBodies.get(name);
+    if (!body) return;
+    const bodyPos = body.mesh.getWorldPosition(new THREE.Vector3());
+    flyToAnimation = null;
+    focusRetarget = {
+        name,
+        fromOffset: controls.target.clone().sub(bodyPos), // old target, relative to the new body
+        lastBodyPos: bodyPos,
+        start: performance.now()
+    };
+    currentFocusedBody = name;
+    cameraOffsetFromTarget = null;
+    chaseCam.hasOffset = false;
+    // No distance clamp mid-glide (the camera may be closer than the body's
+    // normal minimum); the Earth close-up camera sets its own limits after
+    controls.minDistance = 1e-6;
+    updateSidebarSelection(name);
+    showBodyInfo(body.data);
+    // Picking a planet or moon means "show me this body": north up, like the
+    // flight would. (Spacecraft keep the current roll.)
+    if (body.type !== 'satellite') startRollAnimation('north');
+}
+
+// "Already close" means within a few radii of the body: clicking it then hands
+// off in place rather than flying to the standard framing
+function isCameraNearBody(body) {
+    const r = body.mesh.userData.visualRadius || 1;
+    return camera.position.distanceTo(body.mesh.getWorldPosition(_retargetVec)) < r * 8;
+}
+// While chasing, orbiting is done here in the object's frame (pole = object
+// up), not by OrbitControls: its angles are measured against world up, so with
+// the camera rolled to the object's up it hit invisible pole limits and drags
+// came out rotated or reversed. Zoom and pan stay with OrbitControls.
+const chaseDrag = { pointerId: null, x: 0, y: 0, dTheta: 0, dPhi: 0 };
+const CHASE_DAMPING = 0.2; // share of the pending drag applied per frame (smooth like OrbitControls)
+const _WORLD_UP = new THREE.Vector3(0, 1, 0);
+const _poleAlign = new THREE.Quaternion();
+
+// Take this frame's share of the pending mouse orbit (eased like OrbitControls)
+function takeOrbitStep() {
+    const dTheta = chaseDrag.dTheta * CHASE_DAMPING, dPhi = chaseDrag.dPhi * CHASE_DAMPING;
+    chaseDrag.dTheta -= dTheta;
+    chaseDrag.dPhi -= dPhi;
+    if (Math.abs(chaseDrag.dTheta) < 1e-5) chaseDrag.dTheta = 0;
+    if (Math.abs(chaseDrag.dPhi) < 1e-5) chaseDrag.dPhi = 0;
+    return [dTheta, dPhi];
+}
+
+// Orbit `offset` (camera minus target) around `pole`, OrbitControls-style
+function orbitAroundPole(offset, pole, dTheta, dPhi) {
+    _poleAlign.setFromUnitVectors(pole, _WORLD_UP);
+    offset.applyQuaternion(_poleAlign);
+    _chaseSph.setFromVector3(offset);
+    _chaseSph.theta += dTheta;
+    _chaseSph.phi = THREE.MathUtils.clamp(_chaseSph.phi + dPhi, 0.001, Math.PI - 0.001);
+    offset.setFromSpherical(_chaseSph).applyQuaternion(_poleAlign.invert());
+}
+
+// The camera keeps whatever roll it has when follow modes change (no snapping).
+// OrbitControls only orbits correctly around world up, so while the camera is
+// rolled (or chasing) mouse orbiting is done by orbitAroundPole instead.
+function cameraIsRolled() {
+    return camera.up.dot(_WORLD_UP) < 0.99999;
+}
+
+// Scrolling mid-flight: the flight overwrites the camera every frame, so a
+// normal zoom would be lost. Scale where the flight lands instead, so a
+// click-then-scroll zooms right away. Also remembers the cursor for
+// zoom-to-cursor on Earth (see finishEarthSurfaceCamera).
+const lastWheel = { x: 0, y: 0, time: 0 };
+function setupWheelHelpers(canvas) {
+    canvas.addEventListener('wheel', (e) => {
+        lastWheel.x = e.clientX;
+        lastWheel.y = e.clientY;
+        lastWheel.time = performance.now();
+        const anim = flyToAnimation;
+        if (viewMode !== 'map' || !anim || anim.isSizeCompare || !anim.offset) return;
+        const dy = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY;
+        if (!dy) return;
+        const factor = Math.pow(0.95, -controls.zoomSpeed * Math.sign(dy)); // wheel up (dy < 0) → 0.95, closer
+        const len = Math.max(anim.offset.length() * factor, controls.minDistance);
+        anim.offset.setLength(len);
+        if (anim.endDistanceToTarget) anim.endDistanceToTarget = len;
+    }, { capture: true, passive: true });
+}
+
+// ── View roll: Ctrl+drag, compass (north up), level horizon ─────────────
+// Roll = rotating camera.up around the viewing direction. In "On + angle"
+// the chase cam re-applies its own up every frame, so roll changes are
+// written into chaseCam.upLocal as well (see setCameraUp).
+const _rollFwd = new THREE.Vector3();
+const _rollTarget = new THREE.Vector3();
+const _rollNorth = new THREE.Vector3();
+const _rollTmp = new THREE.Vector3();
+const _rollQuat = new THREE.Quaternion();
+let rollAnimation = null; // { start, from: Vector3, kind: 'north' | 'horizon' }
+const ROLL_ANIM_MS = 600;
+const rollDrag = { pointerId: null, x: 0 };
+
+function setCameraUp(up) {
+    camera.up.copy(up).normalize();
+    if (chaseCam.active || (cameraAngleLock && isCameraLocked)) {
+        const chased = celestialBodies.get(chaseCam.bodyName);
+        if (chased) {
+            chased.mesh.getWorldQuaternion(_rollQuat).invert();
+            chaseCam.upLocal.copy(camera.up).applyQuaternion(_rollQuat).normalize();
+        }
+    }
+}
+
+// "Up" for a roll target, flattened so it's perpendicular to the view
+// direction (that's what makes it an upright screen direction)
+function screenUpFrom(dir, out) {
+    _rollFwd.copy(controls.target).sub(camera.position).normalize();
+    out.copy(dir).addScaledVector(_rollFwd, -dir.dot(_rollFwd));
+    return out.lengthSq() > 1e-8 ? out.normalize() : null; // looking straight along it
+}
+
+// North = the rotation axis of the focused body's planet (Earth for the ISS)
+function northDirection(out) {
+    let body = currentFocusedBody && celestialBodies.get(currentFocusedBody);
+    if (body?.type === 'satellite' || body?.type === 'moon') {
+        const parent = [...celestialBodies.values()].find(b => b.mesh === body.parent);
+        if (parent) body = parent;
+    }
+    out.set(0, 1, 0);
+    if (body) out.applyQuaternion(body.mesh.getWorldQuaternion(_rollQuat));
+    return out;
+}
+
+// Level horizon: the focused object's own up (for the ISS, away from Earth)
+function horizonUpDirection(out) {
+    const body = currentFocusedBody && celestialBodies.get(currentFocusedBody);
+    if (!body) return null;
+    return out.set(0, 1, 0).applyQuaternion(body.mesh.getWorldQuaternion(_rollQuat));
+}
+
+function startRollAnimation(kind) {
+    rollAnimation = { start: performance.now(), from: camera.up.clone(), kind };
+}
+
+// Per frame, after the follow/chase code and before controls.update()
+function updateViewRoll() {
+    if (!rollAnimation) return;
+    const want = rollAnimation.kind === 'north' ? northDirection(_rollTmp) : horizonUpDirection(_rollTmp);
+    const target = want && screenUpFrom(want, _rollTarget);
+    if (!target) { rollAnimation = null; return; }
+    const t = Math.min(1, (performance.now() - rollAnimation.start) / ROLL_ANIM_MS);
+    const e = t * t * (3 - 2 * t);
+    // Rotate from the starting up toward the target around the view axis
+    const from = screenUpFrom(rollAnimation.from, _rollNorth) || camera.up;
+    const angle = Math.atan2(_rollFwd.dot(_rollTmp.crossVectors(from, target)), from.dot(target));
+    setCameraUp(_rollTmp.copy(from).applyAxisAngle(_rollFwd, angle * e));
+    if (t >= 1) rollAnimation = null;
+}
+
+function setupViewRoll(canvas) {
+    // Ctrl+drag rolls; caught before OrbitControls (which would pan)
+    canvas.addEventListener('pointerdown', (e) => {
+        if (!e.ctrlKey || e.button !== 0 || viewMode !== 'map') return;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+        rollDrag.pointerId = e.pointerId;
+        rollDrag.x = e.clientX;
+        rollAnimation = null;
+    }, { capture: true });
+    window.addEventListener('pointermove', (e) => {
+        if (e.pointerId !== rollDrag.pointerId) return;
+        const dx = e.clientX - rollDrag.x;
+        rollDrag.x = e.clientX;
+        _rollFwd.copy(controls.target).sub(camera.position).normalize();
+        // Full-width drag ≈ one full turn; drag right turns the view clockwise
+        setCameraUp(_rollTmp.copy(camera.up).applyAxisAngle(_rollFwd, dx / canvas.clientWidth * Math.PI * 2));
+    });
+    const end = (e) => { if (e.pointerId === rollDrag.pointerId) rollDrag.pointerId = null; };
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+
+    document.getElementById('compass-btn')?.addEventListener('click', () => startRollAnimation('north'));
+    document.getElementById('level-horizon-btn')?.addEventListener('click', () => startRollAnimation('horizon'));
+}
+
+// Compass needle points where north is on screen; horizon button only for
+// spacecraft. Called from the ~30 Hz UI tick.
+function updateViewOrientationUI() {
+    const needle = document.getElementById('compass-needle');
+    if (needle) {
+        northDirection(_rollNorth).transformDirection(camera.matrixWorldInverse);
+        const deg = Math.atan2(_rollNorth.x, _rollNorth.y) * 180 / Math.PI;
+        needle.style.transform = `rotate(${deg.toFixed(1)}deg)`;
+    }
+    const levelBtn = document.getElementById('level-horizon-btn');
+    if (levelBtn) {
+        const body = currentFocusedBody && celestialBodies.get(currentFocusedBody);
+        levelBtn.hidden = !(body?.type === 'satellite') || viewMode !== 'map';
+    }
+}
+
+function setupChaseCamDrag(canvas) {
+    canvas.addEventListener('pointerdown', (e) => {
+        if (!chaseCam.active && !cameraIsRolled()) return;
+        // One primary pointer, left button, no pan modifier; a second finger
+        // (pinch) cancels so OrbitControls can zoom
+        if (chaseDrag.pointerId !== null) { chaseDrag.pointerId = null; return; }
+        if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+        chaseDrag.pointerId = e.pointerId;
+        chaseDrag.x = e.clientX;
+        chaseDrag.y = e.clientY;
+    });
+    canvas.addEventListener('pointermove', (e) => {
+        if (e.pointerId !== chaseDrag.pointerId) return;
+        const dx = e.clientX - chaseDrag.x, dy = e.clientY - chaseDrag.y;
+        chaseDrag.x = e.clientX;
+        chaseDrag.y = e.clientY;
+        // Same feel as OrbitControls: a full-height drag = 2π × rotateSpeed
+        const k = 2 * Math.PI * controls.rotateSpeed / canvas.clientHeight;
+        chaseDrag.dTheta -= dx * k;
+        chaseDrag.dPhi -= dy * k;
+    });
+    const end = (e) => { if (e.pointerId === chaseDrag.pointerId) chaseDrag.pointerId = null; };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+}
 let cameraOffsetFromTarget = null; // Stores camera offset when locked
 let starField;
 let currentStarFieldScale = 100000; // Track current scale for smooth transitions
@@ -709,6 +965,9 @@ function init() {
 
     // Controls
     controls = new OrbitControls(camera, renderer.domElement);
+    setupChaseCamDrag(renderer.domElement);
+    setupWheelHelpers(renderer.domElement);
+    setupViewRoll(renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.minDistance = 1; // Allow getting very close in comparison view
@@ -760,7 +1019,7 @@ function init() {
     createStarField();
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts };
 
     // Spacetime grid removed
 
@@ -792,6 +1051,29 @@ function init() {
         btn.classList.toggle('has-warning', problems.length > 0);
         btn.title = problems.length ? problems.join('\n') : 'Live satellite positions from CelesTrak';
     });
+    // Night side up close: dark street map with labels, or city lights.
+    // Remembered between visits.
+    const NIGHT_VIEW_KEY = 'nightView:v1';
+    const applyNightView = style => {
+        setNightStyle(style);
+        const label = document.getElementById('night-view-mode');
+        if (label) label.textContent = style === 'map' ? 'Street map' : 'City lights';
+    };
+    applyNightView(localStorage.getItem(NIGHT_VIEW_KEY) === 'lights' ? 'lights' : 'map');
+    document.getElementById('night-view-toggle')?.addEventListener('click', () => {
+        const next = document.getElementById('night-view-mode').textContent === 'Street map' ? 'lights' : 'map';
+        applyNightView(next);
+        try { localStorage.setItem(NIGHT_VIEW_KEY, next); } catch { /* private mode */ }
+    });
+
+    // The time panel sits just above the settings row; track the row's real
+    // height (it can wrap on narrower windows) instead of a fixed offset
+    const settingsRow = document.getElementById('scale-toggle-container');
+    if (settingsRow && 'ResizeObserver' in window) {
+        new ResizeObserver(() => {
+            document.documentElement.style.setProperty('--settings-row-height', settingsRow.offsetHeight + 'px');
+        }).observe(settingsRow);
+    }
     document.getElementById('satellites-toggle')?.addEventListener('click', () => {
         const label = document.getElementById('satellites-mode');
         const next = SATELLITE_MODES[(SATELLITE_MODES.indexOf(label.textContent) + 1) % SATELLITE_MODES.length];
@@ -839,34 +1121,9 @@ function init() {
     }
 
     // ── Timeline controls ─────────────────────────────────────────────
-    // Helper to change speed by notch index offset
-    function changeSpeedNotch(offset) {
-        const currentMult = getCurrentSpeedMultiplier();
-        
-        // Find closest notch index
-        let closestIdx = 11; // index of 0
-        let minDiff = Infinity;
-        for (let i = 0; i < SPEED_NOTCHES.length; i++) {
-            const diff = Math.abs(SPEED_NOTCHES[i] - currentMult);
-            if (diff < minDiff) {
-                minDiff = diff;
-                closestIdx = i;
-            }
-        }
-        
-        // Apply offset
-        let targetIdx = closestIdx + offset;
-        targetIdx = Math.max(0, Math.min(SPEED_NOTCHES.length - 1, targetIdx));
-        
-        setSpeedMultiplier(SPEED_NOTCHES[targetIdx]);
-    }
-
-    document.getElementById('tl-reverse-fast').addEventListener('click', () => {
-        changeSpeedNotch(-2);
-    });
-    document.getElementById('tl-reverse').addEventListener('click', () => {
-        changeSpeedNotch(-1);
-    });
+    // −/+ step one rung of the speed ladder; ⏪/⏩ step four (16×)
+    document.getElementById('tl-reverse-fast').addEventListener('click', () => stepSimSpeed(-4));
+    document.getElementById('tl-reverse').addEventListener('click', () => stepSimSpeed(-1));
     document.getElementById('tl-play-pause').addEventListener('click', () => {
         if (simPaused) {
             simPaused = false;
@@ -881,19 +1138,60 @@ function init() {
         }
         syncTimelineUI();
     });
-    document.getElementById('tl-forward').addEventListener('click', () => {
-        changeSpeedNotch(1);
+    // Space = play/pause (instead of scrolling the side panel). Also swallowed
+    // on keyup: a focused button (e.g. Play, just clicked) would otherwise be
+    // "pressed" by the browser on release and toggle a second time.
+    const isTextEntry = el => el instanceof HTMLElement && (el.isContentEditable
+        || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'
+        || (el.tagName === 'INPUT' && !['range', 'checkbox', 'radio', 'button'].includes(el.type)));
+    window.addEventListener('keydown', (e) => {
+        if (e.code !== 'Space' || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        if (!e.repeat) document.getElementById('tl-play-pause').click();
     });
-    document.getElementById('tl-forward-fast').addEventListener('click', () => {
-        changeSpeedNotch(2);
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'Space' && !isTextEntry(e.target)) e.preventDefault();
     });
+
+    document.getElementById('tl-forward').addEventListener('click', () => stepSimSpeed(1));
+    document.getElementById('tl-forward-fast').addEventListener('click', () => stepSimSpeed(4));
+
+    // Presets keep the current direction, so they work while reversing too
+    document.querySelectorAll('.tl-preset').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const sign = currentSimSps() < 0 ? -1 : 1;
+            setSimRateSps(sign * Number(btn.dataset.sps));
+        });
+    });
+
+    // Scroll anywhere over the time panel to step the speed ladder (a pointer
+    // that drifts off the thin slider shouldn't break a recording). One wheel
+    // notch = one step, however large its delta (mice send anything from ~100
+    // to 500+ per notch depending on OS settings). Trackpads send many small
+    // deltas per gesture, so those are summed until they amount to a notch.
+    const timelinePanel = document.getElementById('timeline-panel');
+    const WHEEL_NOTCH = 50;   // a single event at least this big is a mouse notch
+    const TRACKPAD_STEP = 100; // small deltas summed to this make one step
+    let speedWheelAccum = 0;
+    timelinePanel?.addEventListener('wheel', (e) => {
+        e.preventDefault(); // don't zoom the map / scroll the page
+        const delta = -(e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY); // up = faster
+        if (delta === 0) return;
+        if (Math.abs(delta) >= WHEEL_NOTCH) {
+            speedWheelAccum = 0;
+            stepSimSpeed(Math.sign(delta));
+            return;
+        }
+        if (Math.sign(delta) !== Math.sign(speedWheelAccum)) speedWheelAccum = 0;
+        speedWheelAccum += delta;
+        if (Math.abs(speedWheelAccum) >= TRACKPAD_STEP) {
+            stepSimSpeed(Math.sign(speedWheelAccum));
+            speedWheelAccum = 0;
+        }
+    }, { passive: false });
 
     const speedSlider = document.getElementById('tl-speed-slider');
     if (speedSlider) {
-        speedSlider.addEventListener('wheel', (e) => {
-            e.preventDefault(); // don't zoom the map / scroll the page
-            adjustSpeedByWheel(e.deltaMode === 1 ? e.deltaY * 33 : e.deltaY); // line-mode wheels (Firefox)
-        }, { passive: false });
         speedSlider.addEventListener('input', (e) => {
             const val = parseInt(e.target.value);
             timeScale = mapSliderToAlignedSpeed(val);
@@ -2503,10 +2801,12 @@ function createTextSprite(text) {
         map: texture,
         transparent: true,
         opacity: 0.8,
-        depthTest: false,
+        // Labels sit on the far sky sphere, so depth testing lets planets and
+        // moons in front hide them (they used to show through Earth up close)
+        depthTest: true,
         depthWrite: false
     });
-    
+
     const sprite = new THREE.Sprite(material);
     sprite.scale.set(0.08, 0.02, 1.0);
     return sprite;
@@ -2704,6 +3004,8 @@ function animate() {
     }
 
     // Update spacetime fabric with gravity wells block REMOVED
+
+    applyScaleTransition();
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
@@ -2980,10 +3282,15 @@ function animate() {
             }
             flyToAnimation = null;
             cameraOffsetFromTarget = null;
+            // Arrive upright (north up); the gradual re-level during the
+            // flight may not have fully finished
+            if (cameraIsRolled()) camera.up.set(0, 1, 0);
+            chaseCam.hasOffset = false; // "On + angle" locks onto this new view
         }
     }
     
     // Camera follow behavior
+    chaseCam.active = false;
     if (currentFocusedBody && !flyToAnimation && !isHoverPanning) {
         // Determine which body map to use based on view mode
         let body;
@@ -3015,8 +3322,52 @@ function animate() {
                 earthSurfaceCam.hasPrevQuat = true;
             }
             
-            // If "Cam moves with object" is ON, camera travels with object
-            if (isCameraLocked) {
+            if (focusRetarget && focusRetarget.name === currentFocusedBody) {
+                // Hand-off glide (see retargetFocus): camera rides along with the
+                // body, only the look-at point and roll change
+                const t = Math.min(1, (performance.now() - focusRetarget.start) / FOCUS_RETARGET_MS);
+                const ease = t * t * (3 - 2 * t);
+                camera.position.add(_retargetVec.copy(_animWorldPosition).sub(focusRetarget.lastBodyPos));
+                focusRetarget.lastBodyPos.copy(_animWorldPosition);
+                controls.target.copy(_animWorldPosition).addScaledVector(focusRetarget.fromOffset, 1 - ease);
+                if (t >= 1) {
+                    focusRetarget = null;
+                    // Normal zoom floor again, never above where the camera already is
+                    const r = body.mesh.userData.visualRadius || 1;
+                    controls.minDistance = Math.min(r * 1.4, camera.position.distanceTo(_animWorldPosition) * 0.95);
+                }
+            } else if (isCameraLocked && cameraAngleLock) {
+                // "On + angle": keep the viewpoint fixed in the object's own frame
+                body.mesh.getWorldQuaternion(_chaseQuat);
+                if (chaseCam.bodyName !== currentFocusedBody || !chaseCam.hasOffset) {
+                    // Lock on from wherever the camera is now
+                    chaseCam.bodyName = currentFocusedBody;
+                    const toLocal = _chaseQuat.clone().invert();
+                    chaseCam.offsetLocal.copy(_animCameraOffset).applyQuaternion(toLocal);
+                    // Keep the current roll too (relative to the object), so
+                    // switching into this mode doesn't turn the view
+                    chaseCam.upLocal.copy(camera.up).applyQuaternion(toLocal).normalize();
+                    chaseCam.hasOffset = true;
+                }
+                // Zoom: OrbitControls applies wheel/pinch zoom inside its own
+                // event handler, between frames. Keep the distance it set rather
+                // than restoring last frame's offset (which undid every zoom).
+                const zoomedDist = _animCameraOffset.length();
+                if (Math.abs(zoomedDist - chaseCam.offsetLocal.length()) > zoomedDist * 1e-9) {
+                    chaseCam.offsetLocal.setLength(zoomedDist);
+                }
+                // Mouse orbit, in the object's frame (see setupChaseCamDrag)
+                if (chaseDrag.dTheta || chaseDrag.dPhi) {
+                    const [dTheta, dPhi] = takeOrbitStep();
+                    orbitAroundPole(chaseCam.offsetLocal, chaseCam.upLocal, dTheta, dPhi);
+                }
+                controls.target.copy(_animWorldPosition);
+                camera.position.copy(_animWorldPosition)
+                    .add(_chaseVec.copy(chaseCam.offsetLocal).applyQuaternion(_chaseQuat));
+                // Roll with the object too, so a framed horizon stays level
+                camera.up.copy(chaseCam.upLocal).applyQuaternion(_chaseQuat);
+                chaseCam.active = true;
+            } else if (isCameraLocked) {
                 // Camera maintains its spherical position relative to the moving target
                 // This allows free orbiting while traveling with the object
                 controls.target.copy(_animWorldPosition);
@@ -3035,12 +3386,40 @@ function animate() {
     if (nowMs - lastHomeIndicatorUpdate >= 33) {
         updateHomeIndicator();
         updateMikoIndicator();
+        updateViewOrientationUI();
         lastHomeIndicatorUpdate = nowMs;
     }
+
+    // Anything but the chase cam uses the normal world-up camera and lets
+    // OrbitControls rotate; the chase cam rotates itself (setupChaseCamDrag)
+    updateViewRoll();
+
+    // Flights re-level a rolled camera gradually (the view is moving anyway)
+    if (flyToAnimation && cameraIsRolled()) camera.up.lerp(_WORLD_UP, 0.08).normalize();
+    // Rolled but not chasing: orbit around the camera's own up
+    if (!chaseCam.active && cameraIsRolled() && !flyToAnimation && (chaseDrag.dTheta || chaseDrag.dPhi)) {
+        const [dTheta, dPhi] = takeOrbitStep();
+        _chaseVec.copy(camera.position).sub(controls.target);
+        orbitAroundPole(_chaseVec, camera.up, dTheta, dPhi);
+        camera.position.copy(controls.target).add(_chaseVec);
+    }
+    const customOrbit = chaseCam.active || cameraIsRolled();
+    controls.enableRotate = !customOrbit;
+    if (!customOrbit) chaseDrag.dTheta = chaseDrag.dPhi = 0;
 
     prepareEarthSurfaceCamera();
     controls.update();
     finishEarthSurfaceCamera();
+    updateNearPlaneForFocus();
+
+    // Chase cam: drags/zooms this frame become the new locked viewpoint
+    if (chaseCam.active) {
+        const chased = celestialBodies.get(chaseCam.bodyName);
+        if (chased) {
+            chased.mesh.getWorldQuaternion(_chaseQuat).invert();
+            chaseCam.offsetLocal.copy(camera.position).sub(controls.target).applyQuaternion(_chaseQuat);
+        }
+    }
 
     if (controlsStateDirty && viewMode === 'map') {
         const controlsDistance = camera.position.distanceTo(controls.target);
@@ -3083,22 +3462,54 @@ const earthSurfaceCam = { active: false, lastDist: 0, hasPrevQuat: false, prevQu
 const _surfaceQuat = new THREE.Quaternion();
 const _surfaceDeltaQuat = new THREE.Quaternion();
 const _surfaceDir = new THREE.Vector3();
+const _surfaceAxis = new THREE.Vector3();
+const _cursorGroundDir = new THREE.Vector3();
+const _cursorRaycaster = new THREE.Raycaster();
+const _cursorNdc = new THREE.Vector2();
+const _earthSphere = new THREE.Sphere();
+
+// Direction from Earth's center to the ground point under a screen position
+// (into _cursorGroundDir); false if the pointer is off the globe
+// `fromDist`: cast from the camera's distance *before* this frame's zoom.
+// OrbitControls has already scaled the distance to Earth's centre by ~5%,
+// which below ~300 km puts the camera inside the globe for a moment, and a
+// ray from inside hits the far side of the planet.
+function earthGroundUnderCursor(clientX, clientY, R, fromDist) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    _cursorNdc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    // Build the ray from the field of view and the camera's orientation.
+    // Raycaster.setFromCamera unprojects a point on the near plane, which is
+    // millimetres from the camera near the surface; subtracting that from a
+    // camera ~100 units from the origin leaves float noise, and the "ground
+    // under the cursor" came out on the far side of Earth.
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    const ray = _cursorRaycaster.ray;
+    ray.origin.copy(camera.position).sub(controls.target).setLength(fromDist).add(controls.target);
+    ray.direction.set(_cursorNdc.x * tanHalf * camera.aspect, _cursorNdc.y * tanHalf, -1)
+        .applyQuaternion(camera.quaternion).normalize();
+    _earthSphere.set(controls.target, R);
+    if (!ray.intersectSphere(_earthSphere, _cursorGroundDir)) return false;
+    _cursorGroundDir.sub(controls.target).normalize();
+    return true;
+}
 
 function prepareEarthSurfaceCamera() {
     const earth = celestialBodies.get('Earth');
-    const focused = earth && viewMode === 'map' && currentFocusedBody === 'Earth' && !flyToAnimation;
+    const focused = earth && viewMode === 'map' && currentFocusedBody === 'Earth' && !flyToAnimation && !focusRetarget;
     const R = earth?.mesh.userData.visualRadius || 1;
     const dist = camera.position.distanceTo(controls.target);
     const active = focused && dist - R < R * SURFACE_MODE_ALT;
 
     if (!active) {
-        if (earthSurfaceCam.active) {
-            // Leaving close-up: restore normal limits
+        // Leaving close-up by zooming out: restore Earth's normal limits. If
+        // focus moved to another body (e.g. the ISS), focusOnBody has already
+        // set that body's limits; overwriting them with Earth's (1.4 R) stopped
+        // the flight short and blocked zooming until a second click.
+        if (earthSurfaceCam.active && currentFocusedBody === 'Earth') {
             controls.minDistance = R * 1.4;
             controls.rotateSpeed = 0.5;
-            camera.near = 0.1;
-            camera.updateProjectionMatrix();
         }
+        // (the near plane is handled by updateNearPlaneForFocus)
         earthSurfaceCam.active = false;
         earthSurfaceCam.hasPrevQuat = false;
         earthSurfaceCam.lastDist = 0;
@@ -3110,6 +3521,19 @@ function prepareEarthSurfaceCamera() {
     controls.minDistance = R * 0.01; // clamping is done on altitude in finishEarthSurfaceCamera()
     controls.rotateSpeed = Math.min(0.5, 0.2 * alt / R);
     const near = THREE.MathUtils.clamp(alt * 0.1, 1e-6, 0.1);
+    if (Math.abs(near - camera.near) > near * 0.05) {
+        camera.near = near;
+        camera.updateProjectionMatrix();
+    }
+}
+
+// Up close to something small (the ISS is ~0.04 units across) the default
+// near plane (0.1) would slice it off, so it shrinks with the distance to the
+// focus point. The log depth buffer keeps precision fine at any near value.
+// The Earth close-up camera manages its own near plane.
+function updateNearPlaneForFocus() {
+    if (earthSurfaceCam.active) return;
+    const near = THREE.MathUtils.clamp(camera.position.distanceTo(controls.target) * 0.05, 1e-6, 0.1);
     if (Math.abs(near - camera.near) > near * 0.05) {
         camera.near = near;
         camera.updateProjectionMatrix();
@@ -3129,6 +3553,20 @@ function finishEarthSurfaceCamera() {
         if (alt > R * SURFACE_MODE_ALT) alt = Math.max(alt, dist - R); // hand back to normal zoom
         alt = Math.max(alt, SURFACE_MIN_ALT_KM * R / 6371);
         _surfaceDir.copy(camera.position).sub(controls.target).normalize();
+        // Zoom toward the cursor, like a web map: swing the camera around
+        // Earth toward the ground point under the pointer, by the share the
+        // altitude changed, so that point stays under the pointer (small-angle
+        // approximation; the camera looks straight down). Zooming out swings back.
+        if (performance.now() - lastWheel.time < 250 && earthGroundUnderCursor(lastWheel.x, lastWheel.y, R, earthSurfaceCam.lastDist)) {
+            const k = alt / prevAlt;                       // < 1 zooming in
+            const angle = _surfaceDir.angleTo(_cursorGroundDir) * (1 - k);
+            _surfaceAxis.crossVectors(_surfaceDir, _cursorGroundDir);
+            if (_surfaceAxis.lengthSq() > 1e-12 && Math.abs(angle) < Math.PI / 2) {
+                _surfaceAxis.normalize();
+                _surfaceDir.applyAxisAngle(_surfaceAxis, angle);
+                if (cameraIsRolled()) camera.up.applyAxisAngle(_surfaceAxis, angle);
+            }
+        }
         camera.position.copy(controls.target).addScaledVector(_surfaceDir, R + alt);
     }
     earthSurfaceCam.lastDist = camera.position.distanceTo(controls.target);
@@ -3137,6 +3575,19 @@ function finishEarthSurfaceCamera() {
 function focusOnBody(name) {
     const body = celestialBodies.get(name);
     if (!body) return;
+    // A new selection starts fresh: otherwise "On + angle" restores the
+    // viewpoint it last locked for this body, undoing the north-up framing
+    chaseCam.hasOffset = false;
+    rollAnimation = null;
+
+    // Already close (e.g. following the ISS and picking Earth): switch focus
+    // in place instead of flying to the standard framing
+    // Not for spacecraft: they're tiny, so "near" really means "fly in and frame it"
+    if (viewMode === 'map' && name !== 'Solar System' && currentFocusedBody !== name
+        && !body.isDistant && body.type !== 'satellite' && isCameraNearBody(body)) {
+        retargetFocus(name);
+        return;
+    }
 
     // Selecting Earth from interstellar space should use the same pullback and
     // direct homeward flight as the Home button, while opening Earth's card.
@@ -3299,7 +3750,7 @@ function focusOnBody(name) {
     // includes children, so for planets it would swallow their moons' orbits
     // and block zooming (OrbitControls enforces minDistance every frame).
     controls.minDistance = Math.max(ownRadius * 1.4, camera.near * 2.5);
-    if (body.type === 'satellite') controls.minDistance = Math.max(ownRadius * 3, camera.near * 1.5);
+    if (body.type === 'satellite') controls.minDistance = ownRadius * 1.3; // until it nearly fills the view
     
     // Calculate target camera position
     let offset;
@@ -4342,9 +4793,24 @@ function onMouseDown(event) {
     // We must release the focus to allow panning, otherwise animate() will tick the target back to the body
     const isPanning = event.shiftKey || event.button === 1 || event.button === 2;
 
+    // Following a satellite (the ISS): a pan gesture hands focus to the planet
+    // it orbits, in place, so scrolling then zooms down into the planet. The
+    // drag itself is swallowed (pan would fight the new follow target).
+    const focused = currentFocusedBody && celestialBodies.get(currentFocusedBody);
+    if (isPanning && viewMode === 'map' && focused?.type === 'satellite' && focused.parent) {
+        const planet = [...celestialBodies].find(([, b]) => b.mesh === focused.parent);
+        if (planet) {
+            retargetFocus(planet[0]);
+            controls.enablePan = false;
+            window.addEventListener('pointerup', () => { controls.enablePan = true; }, { once: true });
+            return;
+        }
+    }
+
     if (isPanning && (isCameraLocked || currentFocusedBody)) {
         if (isCameraLocked) {
             isCameraLocked = false;
+            cameraAngleLock = false;
             document.getElementById('camera-lock-mode').textContent = 'Off';
         }
         // Always clear the focused body when panning to prevent the update loop from fighting the controls
@@ -4668,75 +5134,107 @@ function showOrbitTooltip(planetName, x, y) {
     tooltip.classList.remove('hidden');
 }
 
+// Compressed ↔ realistic scale is animated instead of snapped, and the camera
+// is left alone: planets, moons and stars slide to their new distances over
+// SCALE_TRANSITION_MS (geometric interpolation, so a 10× change looks even),
+// orbit lines stretch with them. With follow on, the camera rides along with
+// the selected body at the same angle; with follow off it doesn't move at all.
+const SCALE_TRANSITION_MS = 1600;
+let scaleTransition = null;
+
 function toggleScale() {
-    scaleMode = scaleMode === 'compressed' ? 'realistic' : 'compressed';
-    document.getElementById('scale-mode').textContent = capitalize(scaleMode);
-    
-    // Recalculate all planet positions
+    // Snapshot where everything is now (mid-transition included)
+    const planets = [], moons = [], stars = [];
     solarSystem.children.forEach(planetData => {
         const body = celestialBodies.get(planetData.name);
-        if (body) {
-            const newDistance = scaleDistance(planetData.distance);
-            body.orbitRadius = newDistance;
-
-            // In aligned mode update mesh position directly; in realistic mode
-            // updateRealisticPositions() below will handle it via orbitGroup rotation
-            if (orbitalMode !== 'realistic') {
-                const angle = calculateAlignedOrbitAngle(planetData);
-                body.mesh.position.x = Math.cos(angle) * newDistance;
-                body.mesh.position.z = Math.sin(angle) * newDistance;
-            }
-
-            // Update orbit line
-            const orbitObj = orbitLines.get(planetData.name);
-            if (orbitObj) {
-                scene.remove(orbitObj.visible);
-                scene.remove(orbitObj.hitTarget);
-                orbitObj.visible.geometry.dispose();
-                orbitObj.visible.material.dispose();
-                orbitObj.hitTarget.geometry.dispose();
-                orbitObj.hitTarget.material.dispose();
-                createOrbitLine(newDistance, planetData.color, planetData.name);
-            }
-        }
-    });
-
-    // Moon orbits change scale too (aligned mode animates from orbitRadius)
-    solarSystem.children.forEach(planetData => {
+        if (body) planets.push({ body, data: planetData, from: body.orbitRadius });
         (planetData.children || []).forEach(moonData => {
             const moon = celestialBodies.get(moonData.name);
-            if (moon) moon.orbitRadius = scaleDistance(moonData.distance, true);
+            if (moon) moons.push({ body: moon, data: moonData, from: moon.orbitRadius ?? scaleDistance(moonData.distance, true) });
         });
     });
-
-    // Re-apply realistic positions at the current simDate (moon distances changed too)
-    if (orbitalMode === 'realistic') {
-        updateRealisticPositions(simDate);
-    }
-    
-    // Recalculate distant star positions
     nearbyStars.forEach(starData => {
         const body = celestialBodies.get(starData.name);
-        if (body && body.isDistant) {
-            const position = calculateStarPosition(starData);
-            const scaleFactor = scaleMode === 'realistic' ? 10000 : 500;
-            body.mesh.position.set(
-                position.x * scaleFactor,
-                position.y * scaleFactor,
-                position.z * scaleFactor
-            );
+        if (body && body.isDistant) stars.push({ body, data: starData, from: body.mesh.position.clone() });
+    });
+
+    scaleMode = scaleMode === 'compressed' ? 'realistic' : 'compressed';
+    document.getElementById('scale-mode').textContent = capitalize(scaleMode);
+
+    // Targets in the new scale
+    planets.forEach(p => {
+        p.to = scaleDistance(p.data.distance);
+        // Redraw the orbit line at its final size; it's scaled from the old
+        // size to 1 during the transition
+        const orbitObj = orbitLines.get(p.data.name);
+        if (orbitObj) {
+            scene.remove(orbitObj.visible);
+            scene.remove(orbitObj.hitTarget);
+            orbitObj.visible.geometry.dispose();
+            orbitObj.visible.material.dispose();
+            orbitObj.hitTarget.geometry.dispose();
+            orbitObj.hitTarget.material.dispose();
+        }
+        createOrbitLine(p.to, p.data.color, p.data.name);
+    });
+    moons.forEach(m => { m.to = scaleDistance(m.data.distance, true); });
+    stars.forEach(st => {
+        const position = calculateStarPosition(st.data);
+        const scaleFactor = scaleMode === 'realistic' ? 10000 : 500;
+        st.to = new THREE.Vector3(position.x, position.y, position.z).multiplyScalar(scaleFactor);
+    });
+
+    scaleTransition = { start: performance.now(), planets, moons, stars };
+    applyScaleTransition(); // first frame now, so nothing jumps
+
+    // Follow off normally keeps turning the camera toward the selected body;
+    // here that would swing the view as bodies slide out. Release the lock
+    // (as panning does) so the view stays exactly as framed. Follow on keeps
+    // riding along with the body at the same angle.
+    if (!isCameraLocked) currentFocusedBody = null;
+}
+
+function applyScaleTransition() {
+    if (!scaleTransition) return;
+    const t = Math.min(1, (performance.now() - scaleTransition.start) / SCALE_TRANSITION_MS);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in-out
+    const geo = (from, to) => from * Math.pow(to / from, e);
+
+    scaleTransition.planets.forEach(p => {
+        const r = geo(p.from, p.to);
+        p.body.orbitRadius = r;
+        // Aligned orbits animate from orbitRadius each frame; realistic orbits
+        // rotate the orbit group, with the planet sitting out along +X
+        if (orbitalMode === 'realistic') p.body.mesh.position.set(r, 0, 0);
+        const orbitObj = orbitLines.get(p.data.name);
+        if (orbitObj) {
+            orbitObj.visible.scale.setScalar(r / p.to);
+            orbitObj.hitTarget.scale.setScalar(r / p.to);
         }
     });
-    
-    // Adjust camera if needed
-    if (currentFocusedBody) {
-        focusOnBody(currentFocusedBody);
-    }
+    scaleTransition.moons.forEach(m => { m.body.orbitRadius = geo(m.from, m.to); });
+    scaleTransition.stars.forEach(st => {
+        st.body.mesh.position.copy(st.from).multiplyScalar(Math.pow(st.to.length() / st.from.length(), e));
+    });
+    realisticMoonPositionsDirty = true; // moons re-placed even while paused
+
+    if (t >= 1) scaleTransition = null;
 }
 
 function toggleCameraLock() {
-    isCameraLocked = !isCameraLocked;
-    document.getElementById('camera-lock-mode').textContent = isCameraLocked ? 'On' : 'Off';
+    // Cycle Off → On → On + angle
+    if (!isCameraLocked) {
+        isCameraLocked = true;
+        cameraAngleLock = false;
+    } else if (!cameraAngleLock) {
+        cameraAngleLock = true;
+    } else {
+        isCameraLocked = false;
+        cameraAngleLock = false;
+    }
+    chaseCam.hasOffset = false; // lock on from the current view next frame
+    document.getElementById('camera-lock-mode').textContent =
+        !isCameraLocked ? 'Off' : cameraAngleLock ? 'On + angle' : 'On';
 
     // If turning on lock and we have a focused body, make sure we're tracking it
     if (isCameraLocked && currentFocusedBody) {
@@ -4775,7 +5273,7 @@ function updateRealisticPositions(date, phase = 'all') {
                         const moonAngle = moonData.name === 'Moon'
                             ? calculateMoonAngle(daysSinceJ2000)
                             : calculatePlanetAngle(moonData, daysSinceJ2000);
-                        const moonDist = scaleDistance(moonData.distance, true);
+                        const moonDist = moonBody.orbitRadius ?? scaleDistance(moonData.distance, true);
                         _animLocalPosition.set(Math.cos(moonAngle) * moonDist, 0, Math.sin(moonAngle) * moonDist);
                         _animLocalPosition.applyAxisAngle(_animYAxis, -body.mesh.rotation.y);
                         moonBody.mesh.position.copy(_animLocalPosition);
@@ -4866,6 +5364,7 @@ function updateTimelineDisplay(force = false) {
 }
 
 function syncTimelineUI() {
+    updateSpeedPresetHighlight();
     // Sync play/pause button
     const playBtn = document.getElementById('tl-play-pause');
     if (playBtn) playBtn.textContent = simPaused ? '▶' : '⏸';
