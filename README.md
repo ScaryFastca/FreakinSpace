@@ -4,7 +4,7 @@ An interactive 3D map of the universe that runs in your browser. Fly from the
 streets below the International Space Station out past the planets to the
 largest stars known, with everything placed where it really is right now.
 
-**[Try it live →](https://scaryfast.ca/spacetest/)**
+**[Try it live →](https://scaryfast.ca/space/)**
 
 Built with [Three.js](https://threejs.org/) and plain JavaScript: no build step,
 no framework, no account.
