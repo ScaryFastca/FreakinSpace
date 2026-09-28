@@ -976,6 +976,45 @@ body {
     box-shadow: 0 0 15px rgba(74, 158, 255, 0.3);
 }
 
+/* Konami-code easter egg marker: same shape as the home arrow, pointed at Uranus. */
+#miko-indicator {
+    position: fixed;
+    pointer-events: none;
+    z-index: 1000;
+    transition: all 0.2s ease;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+#miko-indicator.hidden {
+    opacity: 0;
+    visibility: hidden;
+}
+
+#miko-arrow {
+    font-size: 2.5rem;
+    color: #ff5ad9;
+    text-shadow: 0 0 15px rgba(255, 90, 217, 1), 0 0 30px rgba(255, 90, 217, 0.5);
+    line-height: 1;
+    filter: drop-shadow(0 0 8px rgba(255, 90, 217, 0.8));
+}
+
+#miko-label {
+    font-size: 0.7rem;
+    color: #ff5ad9;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    text-align: center;
+    background: rgba(30, 0, 24, 0.9);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 90, 217, 0.5);
+    white-space: nowrap;
+    box-shadow: 0 0 15px rgba(255, 90, 217, 0.3);
+}
+
 #info-popup {
     position: fixed;
     top: 20px;
@@ -1897,4 +1936,26 @@ body {
         height: auto !important;
         padding: 0 14px 14px !important;
     }
+}
+
+/* Esri imagery credit, shown only while satellite tiles are on screen */
+#imagery-attribution {
+    position: fixed;
+    right: 8px;
+    bottom: 4px;
+    z-index: 5;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.7);
+    background: rgba(0, 0, 0, 0.45);
+    padding: 2px 6px;
+    border-radius: 3px;
+    pointer-events: none;
+    display: none;
+}
+#imagery-attribution.visible { display: block; }
+
+/* Satellite data couldn't be downloaded (details in the button's tooltip) */
+#satellites-toggle.has-warning::after {
+    content: ' \26A0';
+    color: #ffb347;
 }

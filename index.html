@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=9">
+    <link rel="stylesheet" href="css/styles.css?v=12">
     <script type="importmap">
     {
         "imports": {
@@ -105,6 +105,10 @@
                 <span class="toggle-label">Constellations:</span>
                 <span id="constellations-mode">On</span>
             </button>
+            <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
+                <span class="toggle-label">Satellites:</span>
+                <span id="satellites-mode">On</span>
+            </button>
             <button id="home-indicator-toggle" class="toggle-btn">
                 <span class="toggle-label">Home Arrow:</span>
                 <span id="home-indicator-mode">Off</span>
@@ -114,6 +118,11 @@
         <div id="home-indicator" class="hidden">
             <div id="home-arrow">⬆</div>
             <div id="home-label">Home</div>
+        </div>
+
+        <div id="miko-indicator" class="hidden">
+            <div id="miko-arrow">⬆</div>
+            <div id="miko-label">CodeMiko</div>
         </div>
 
         <div id="stellar-comparison" aria-hidden="true">
@@ -206,6 +215,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=33"></script>
+    <script type="module" src="js/main.js?v=55"></script>
 </body>
 </html>
