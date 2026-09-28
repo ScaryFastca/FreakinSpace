@@ -1,13 +1,13 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=79';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=80';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=79';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=79';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=79';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=80';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=80';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=80';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=79';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=79';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=80';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=80';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -445,6 +445,10 @@ let simDate = new Date();           // Current simulation date/time
 let simSpeed = 0;                   // ms of sim time per ms of real time (0 = paused)
 let simPaused = true;               // Whether simulation is paused
 let timeScale = 1.0;                // Speed multiplier set by the slider
+// Starting speed: 5120 sim-seconds per second (≈1.4 hr/s, a rung of the speed
+// ladder) is slow enough to follow and fast enough that a new visitor sees
+// planets, moons and satellites moving. The app opens playing at this speed.
+const DEFAULT_SIM_SPS = 5120;
 let lastFrameTime = Date.now();     // For delta-time calculations
 let lastTimelineDisplayMinute = null;
 let realisticMoonPositionsDirty = true;
@@ -1127,11 +1131,12 @@ function init() {
     document.getElementById('tl-play-pause').addEventListener('click', () => {
         if (simPaused) {
             simPaused = false;
-            // Resume at whatever speed was set. Only fall back to 1× when no
-            // speed is set at all; don't judge by the slider thumb, since slow
-            // wheel-set speeds (sec/s, min/s) sit on its "paused" notch.
+            // Resume at whatever speed was set. Only fall back to the default
+            // when no speed is set at all; don't judge by the slider thumb,
+            // since slow speeds (sec/s, min/s) sit on its "paused" notch.
             if (getSimulationRate() === 0) {
-                setSpeedMultiplier(1.0);
+                setSimRateSps(DEFAULT_SIM_SPS);
+                return;
             }
         } else {
             simPaused = true;
@@ -1152,6 +1157,9 @@ function init() {
     window.addEventListener('keyup', (e) => {
         if (e.code === 'Space' && !isTextEntry(e.target)) e.preventDefault();
     });
+
+    // Open playing at the default speed (also sets the slider and readout)
+    setSimRateSps(DEFAULT_SIM_SPS);
 
     document.getElementById('tl-forward').addEventListener('click', () => stepSimSpeed(1));
     document.getElementById('tl-forward-fast').addEventListener('click', () => stepSimSpeed(4));
@@ -5297,7 +5305,9 @@ function toggleOrbitalMode() {
         // Start paused at today's date so positions are visible before anything moves
         simDate = new Date();
         simPaused = true;
-        simSpeed = MS_PER_DAY; // 1 day/sec ready when user hits play
+        setSimRateSps(DEFAULT_SIM_SPS); // ready for when the user hits play
+        simPaused = true;
+        syncTimelineUI();
         updateRealisticPositions(simDate);
     } else {
         // Aligned mode - reset all orbit groups to 0 rotation (planets aligned on x-axis)
