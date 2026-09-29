@@ -141,6 +141,23 @@
                     <label class="popup-row"><input type="radio" name="star-scale" value="realistic"> Realistic</label>
                 </div>
             </div>
+            <!-- Small bodies menu -->
+            <div class="popup-menu" id="small-bodies-menu">
+                <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
+                    <span class="toggle-label">Small bodies</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel" role="menu">
+                    <label class="popup-row"><input type="checkbox" data-small-group="dwarf" checked> Dwarf planets <span class="popup-hint">Pluto, Eris, Ceres…</span></label>
+                    <label class="popup-row"><input type="checkbox" data-small-group="asteroid" checked> Asteroids <span class="popup-hint">Apophis</span></label>
+                    <label class="popup-row"><input type="checkbox" data-small-group="comet" checked> Comets <span class="popup-hint">Halley</span></label>
+                    <label class="popup-row"><input type="checkbox" data-small-group="interstellar" checked> Interstellar objects <span class="popup-hint">ʻOumuamua…</span></label>
+                    <label class="popup-row"><input type="checkbox" data-small-group="spacecraft" checked> Spacecraft <span class="popup-hint">Voyagers, New Horizons</span></label>
+                    <div class="popup-heading"></div>
+                    <label class="popup-row"><input type="checkbox" id="menu-small-orbits" checked> Show their orbits and paths</label>
+                    <label class="popup-row"><input type="checkbox" id="menu-small-true-size"> True size <span class="popup-hint">tiny: pick from the list, then zoom in</span></label>
+                </div>
+            </div>
             <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
                 <span class="toggle-label">Satellites:</span>
                 <span id="satellites-mode">On</span>
@@ -277,6 +294,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=91"></script>
+    <script type="module" src="js/main.js?v=97"></script>
 </body>
 </html>

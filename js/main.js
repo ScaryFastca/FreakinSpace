@@ -1,13 +1,14 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=91';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=97';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=91';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=91';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=91';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=97';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=97';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=97';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=97';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=91';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=91';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=97';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=97';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -129,6 +130,9 @@ function loadRealTexture(name, material, makeFallbackTexture) {
         // Upgrade in place: every material sharing this texture gets the 8K image
         if (HI_RES_TEXTURE_FILES[name] && canUseHiResTextures()) {
             new THREE.ImageLoader().load(HI_RES_TEXTURE_FILES[name], img => {
+                // GPU storage was allocated (immutably) at 2K; free it so the next
+                // upload reallocates at 8K instead of overflowing with texSubImage
+                tex.dispose();
                 tex.image = img;
                 tex.needsUpdate = true;
             });
@@ -1019,7 +1023,8 @@ let categorySortModes = {
     'Solar System': 'distance',  // Default: distance from Sun
     'Stars': 'size',              // Default: biggest first
     'Exoplanets': 'name',         // Default: alphabetical
-    'Black Holes': 'name'         // Default: alphabetical
+    'Black Holes': 'name',        // Default: alphabetical
+    'Small Bodies': 'distance'    // Default: nearest to Earth first
 }; // Each category has its own sort mode: 'name', 'size', or 'distance'
 
 // Track which categories are expanded (persisted in localStorage)
@@ -1027,7 +1032,8 @@ let categoryExpansionState = {
     'Solar System': true,   // Default: expanded
     'Stars': true,          // Default: expanded
     'Exoplanets': true,     // Default: expanded
-    'Black Holes': true     // Default: expanded
+    'Black Holes': true,    // Default: expanded
+    'Small Bodies': true
 };
 
 // Load expansion state from localStorage if available
@@ -1173,6 +1179,8 @@ function init() {
     setSatelliteMode(SATELLITE_MODES[0]);
     createNearbyStars();
     setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
+    // Dwarf planets, asteroid, comet, interstellar objects, spacecraft
+    initSmallBodies(scene).forEach(sb => celestialBodies.set(sb.name, { mesh: sb.mesh, data: sb.data, type: 'smallbody' }));
     setupStellarReferenceMeshes();
     createStarField();
 
@@ -1239,6 +1247,7 @@ function init() {
     });
     setupPopupMenus();
     setupScaleMenu();
+    setupSmallBodiesMenu();
     setupBodyInfoPeek();
     
 
@@ -3161,6 +3170,8 @@ function animate() {
 
     applyScaleTransition();
     updateConstellationIntro();
+    refreshAUAnchors();
+    updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies);
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
@@ -3715,20 +3726,18 @@ function prepareEarthSurfaceCamera() {
     const alt = dist - R;
     controls.minDistance = R * 0.01; // clamping is done on altitude in finishEarthSurfaceCamera()
     controls.rotateSpeed = Math.min(0.5, 0.2 * alt / R);
-    const near = THREE.MathUtils.clamp(alt * 0.1, 1e-6, 0.1);
-    if (Math.abs(near - camera.near) > near * 0.05) {
-        camera.near = near;
-        camera.updateProjectionMatrix();
-    }
+    // (near plane: set by updateNearPlaneForFocus after finishEarthSurfaceCamera
+    // has placed the camera; setting it here from the pre-remap distance made a
+    // quick zoom-out from low altitude clip the ground for a frame)
 }
 
 // Up close to something small (the ISS is ~0.04 units across) the default
 // near plane (0.1) would slice it off, so it shrinks with the distance to the
 // focus point. The log depth buffer keeps precision fine at any near value.
-// The Earth close-up camera manages its own near plane.
+// Runs once per frame after the camera's final position is known (including
+// the Earth close-up camera's altitude remap), so it covers that mode too.
 const _nearBodyPos = new THREE.Vector3();
 function updateNearPlaneForFocus() {
-    if (earthSurfaceCam.active) return;
     // Nearest thing that could be clipped: the focus point, or the surface of
     // any Solar System body. Using only the focus distance clipped Earth away
     // (showing the sky through it) when zooming toward Earth while centred on
@@ -3951,11 +3960,10 @@ function focusOnBody(name) {
     const minDistance = isStarBody ? ownRadius * 5 : visualRadius * 2.5;
     distance = Math.max(distance, minDistance);
     distance = Math.max(distance, 6);   // Absolute minimum
-    if (body.type === 'satellite') {
-        // Spacecraft are a few hundredths of a unit: frame the model up close
-        // with Earth filling the background
-        distance = ownRadius * 10;
-    }
+    // Spacecraft are a few hundredths of a unit: frame the model up close
+    // with Earth filling the background. True-size small bodies likewise.
+    const tinyBody = body.type === 'satellite' || (body.type === 'smallbody' && ownRadius < 0.05);
+    if (tinyBody) distance = ownRadius * 10;
     if (body.type === 'exoplanet' && body.orbitRadius) {
         // Start with both the planet and its host in frame. The user can zoom
         // closer after arriving at the system.
@@ -3969,7 +3977,7 @@ function focusOnBody(name) {
     // includes children, so for planets it would swallow their moons' orbits
     // and block zooming (OrbitControls enforces minDistance every frame).
     controls.minDistance = Math.max(ownRadius * 1.4, camera.near * 2.5);
-    if (body.type === 'satellite') controls.minDistance = ownRadius * 1.3; // until it nearly fills the view
+    if (tinyBody) controls.minDistance = ownRadius * 1.3; // until it nearly fills the view
     
     // Calculate target camera position
     let offset;
@@ -4295,6 +4303,8 @@ function updateZoomLevel() {
         } else if (body.type === 'system') {
             // Solar system marker - visible at stellar zoom
             body.mesh.visible = (currentZoomLevel === 'STELLAR');
+        } else if (body.type === 'smallbody') {
+            // visibility set each frame by smallBodies.js (menu toggles, dates)
         } else {
             // Solar system objects: visible at solar zoom levels
             body.mesh.visible = (currentZoomLevel !== 'STELLAR');
@@ -5581,6 +5591,46 @@ function setStarScale(mode) {
     if (!STAR_SCALES[mode] || mode === starScaleMode) return;
     starScaleMode = mode;
     setScaleValue(scaleValue, true);
+}
+
+// True distance from the Sun (AU) → scene units, following the planets'
+// current orbit radii (piecewise linear between them), so small bodies sit in
+// the right place relative to the planets at any Scale setting. Inside
+// Mercury it keeps clear of the Sun; beyond Neptune it continues at
+// Neptune's units per AU.
+let auAnchors = null;
+function refreshAUAnchors() {
+    auAnchors = solarSystem.children
+        .filter(pd => celestialBodies.get(pd.name)?.orbitGroup)
+        .map(pd => [pd.distance / AU, celestialBodies.get(pd.name).orbitRadius])
+        .sort((x, y) => x[0] - y[0]);
+}
+function mapAUToScene(rAU) {
+    const a = auAnchors;
+    if (!a || !a.length) return rAU * currentUnitsPerAU;
+    const sunEdge = sunExtent ?? (celestialBodies.get('Sun')?.mesh.userData.visualRadius || 14);
+    if (rAU <= a[0][0]) return sunEdge + (a[0][1] - sunEdge) * (rAU / a[0][0]);
+    for (let k = 1; k < a.length; k++) {
+        if (rAU <= a[k][0]) {
+            const t = (rAU - a[k - 1][0]) / (a[k][0] - a[k - 1][0]);
+            return a[k - 1][1] + (a[k][1] - a[k - 1][1]) * t;
+        }
+    }
+    const [aN, rN] = a[a.length - 1];
+    return rN + (rAU - aN) * (rN / aN);
+}
+
+// ── Small bodies menu (bottom bar) ──────────────────────────────────────
+function setupSmallBodiesMenu() {
+    document.querySelectorAll('input[data-small-group]').forEach(cb =>
+        cb.addEventListener('change', () => setSmallBodyGroupVisible(cb.dataset.smallGroup, cb.checked)));
+    document.getElementById('menu-small-orbits')?.addEventListener('change', e => setSmallBodyOrbitsVisible(e.target.checked));
+    document.getElementById('menu-small-true-size')?.addEventListener('change', e => {
+        setSmallBodyTrueSize(e.target.checked);
+        // Let the zoom floor follow the new size if one is focused
+        const body = currentFocusedBody && celestialBodies.get(currentFocusedBody);
+        if (body?.type === 'smallbody') controls.minDistance = body.mesh.userData.visualRadius * 1.3;
+    });
 }
 
 // ── Scale menu (bottom bar) ─────────────────────────────────────────────
@@ -7724,7 +7774,8 @@ function populateObjectList() {
         'Solar System': [],
         'Exoplanets': [],
         'Stars': [],
-        'Black Holes': []
+        'Black Holes': [],
+        'Small Bodies': []
     };
 
     // Exoplanet data stores orbital separation in `distance`; the object list's
@@ -7770,6 +7821,8 @@ function populateObjectList() {
                 }
                 moons.get(parentName).push({ name, body });
             }
+        } else if (type === 'smallbody') {
+            categories['Small Bodies'].push({ name, body });
         } else if (isSolar) {
             planets.push({ name, body });
         } else if (type === 'blackhole') {
