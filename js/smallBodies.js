@@ -204,10 +204,11 @@ export function initSmallBodies(scene) {
         const path = new THREE.Line(
             new THREE.BufferGeometry().setAttribute('position',
                 new THREE.Float32BufferAttribute(new Float32Array((pathAU ? pathAU.length : 2) * 3), 3)),
-            new THREE.LineBasicMaterial({ color: b.color, transparent: true, opacity: 0.175, depthWrite: false })
+            new THREE.LineBasicMaterial({ color: b.color, transparent: true, opacity: 0.0875, depthWrite: false })
         );
         path.raycast = () => {};
         path.frustumCulled = false;
+        path.layers.set(1); // main.js ORBIT_LAYER: hidden with the Q key
         scene.add(path);
 
         entries.push({ data: b, group, sphere, enlargedRadius: visualRadius, path, pathAU, dir: b.coast ? skyDirection(b.coast.ra, b.coast.dec, new THREE.Vector3()) : null });

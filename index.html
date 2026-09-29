@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=21">
+    <link rel="stylesheet" href="css/styles.css?v=23">
     <script type="importmap">
     {
         "imports": {
@@ -57,6 +57,21 @@
             </div>
             <div class="control-hint">
                 <span class="key">Click</span> an object to focus
+            </div>
+            <div class="control-hint">
+                <span class="key">A</span> / <span class="key">D</span> slow down / speed up time
+            </div>
+            <div class="control-hint">
+                <span class="key">W</span> / <span class="key">S</span> spread out / compress distances
+            </div>
+            <div class="control-hint">
+                <span class="key">Q</span> hide / show orbit lines
+            </div>
+            <div class="control-hint">
+                <span class="key">E</span> / <span class="key">I</span> fly to Earth / the ISS
+            </div>
+            <div class="control-hint">
+                <span class="key">H</span> hide / show the interface
             </div>
         </div>
         <button id="controls-info-button" type="button" hidden
@@ -291,9 +306,10 @@
         </nav>
     </div>
 
+    <div id="ui-hidden-hint" aria-live="polite">Press <span class="key">H</span> to show the interface</div>
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=97"></script>
+    <script type="module" src="js/main.js?v=108"></script>
 </body>
 </html>

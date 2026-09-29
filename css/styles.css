@@ -570,8 +570,9 @@ body {
 
 #controls-info {
     position: absolute;
-    bottom: 20px;
+    bottom: calc(30px + var(--settings-row-height, 40px)); /* clear of the settings row */
     left: 300px;
+    z-index: 1002; /* opened on demand: over the time panel and settings row */
     pointer-events: auto;
     background: rgba(0, 10, 30, 0.7);
     backdrop-filter: blur(10px);
@@ -2156,3 +2157,30 @@ body {
     border-color: rgba(255, 170, 136, 0.8);
     color: #fff;
 }
+
+/* H: hide the whole interface (clean screenshots / recordings) */
+body.ui-hidden #ui-container {
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+body.ui-hidden #ui-container,
+body.ui-hidden #ui-container * {
+    pointer-events: none !important;
+}
+#ui-hidden-hint {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 3000;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: rgba(0, 10, 30, 0.7);
+    border: 1px solid rgba(74, 158, 255, 0.3);
+    color: #cfe3ff;
+    font-size: 0.85rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+}
+#ui-hidden-hint.show { opacity: 1; }

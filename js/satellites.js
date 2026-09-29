@@ -11,6 +11,15 @@ const EARTH_RADIUS_KM = 6371;
 // SGP4 budget per frame; big groups (Starlink ~10k) refresh over several frames
 const PROPAGATIONS_PER_FRAME = 1500; // ~6 ms
 const ISS_NORAD_ID = '25544'; // drawn separately by iss.js
+// SGP4 cost is constant for most orbits, but for resonant deep-space ones
+// (geostationary, Molniya: satrec.irez ≠ 0) it numerically integrates from
+// the TLE epoch in 12 h steps: ~3 µs a day out, ~430 µs six years out, per
+// satellite per call (hundreds of ms a frame). Beyond one orbit from the
+// epoch we propagate to the same point in the orbit within the first period
+// instead (the inertial orbit repeats) and apply Earth's real rotation for the
+// actual date. Checked against full integration over all 567 GEO objects:
+// ≤ 60 km at 3 days, ≤ 580 km at 20 days, ~3,000 km median at 90 days (a few
+// degrees along the ring; the real TLE is stale by then anyway).
 
 const GROUPS = [
     { key: 'stations', label: 'Space stations', color: 0xffffff, size: 4 },
@@ -131,6 +140,8 @@ export function updateSatellites(earthMesh, simDate, visible = true) {
 
     const k = (earthMesh.userData.visualRadius || 1) / EARTH_RADIUS_KM;
     const gmst = sat.gstime(simDate);
+    const jd = simDate.getTime() / 86400000 + 2440587.5;
+    const epochDate = new Date(0);
     let budget = PROPAGATIONS_PER_FRAME;
 
     for (const g of groups.values()) {
@@ -147,7 +158,18 @@ export function updateSatellites(earthMesh, simDate, visible = true) {
             const i = g.cursor;
             g.cursor = (g.cursor + 1) % n;
             if (g.cursor === 0) g.fullPass = true;
-            const pv = sat.propagate(g.satrecs[i], simDate);
+            const rec = g.satrecs[i];
+            let when = simDate;
+            if (rec.irez) {
+                const days = jd - rec.jdsatepoch;
+                const period = 2 * Math.PI / rec.no / 1440; // days (no = rad/min)
+                if (Math.abs(days) > period) {
+                    const phase = ((days % period) + period) % period;
+                    epochDate.setTime((rec.jdsatepoch + phase - 2440587.5) * 86400000);
+                    when = epochDate;
+                }
+            }
+            const pv = sat.propagate(rec, when);
             if (!pv.position) { arr[i * 3] = arr[i * 3 + 1] = arr[i * 3 + 2] = 0; continue; } // decayed / bad TLE: hide inside Earth
             const e = sat.eciToEcf(pv.position, gmst);
             arr[i * 3] = e.x * k;

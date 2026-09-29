@@ -1,14 +1,14 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=97';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=108';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=97';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=97';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=97';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=97';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=108';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=108';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=108';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=108';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=97';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=97';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=108';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=108';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -84,6 +84,21 @@ function blackbodyColor(kelvin) {
 
 // Star display color: physical temperature when the data has one ("5,778 K"),
 // otherwise the hand-authored color.
+// Surface shader settings from a star's size and temperature
+const SUN_RADIUS_KM = 696000;
+function starSurfaceParams(data, hasRealMap) {
+    const k = typeof data.temperature === 'string' ? parseFloat(data.temperature.replace(/,/g, '')) : data.temperature;
+    const rSun = (data.radius || SUN_RADIUS_KM) / SUN_RADIUS_KM;
+    return {
+        // Granules scale with the star: ~55 per radius for the Sun, a handful on supergiants
+        cells: THREE.MathUtils.clamp(55 * Math.pow(rSun, -0.35), 6, 70),
+        // Convective, cool stars are spotty; hot (> ~7000 K) ones aren't. The
+        // Sun's real map already has its own features.
+        spots: hasRealMap || !(k > 0) ? 0 : 1 - THREE.MathUtils.smoothstep(k, 4000, 7000),
+        mottle: hasRealMap ? 0.04 : 0.14
+    };
+}
+
 function starDisplayColor(data) {
     const k = typeof data.temperature === 'string' ? parseFloat(data.temperature.replace(/,/g, '')) : data.temperature;
     if (k && isFinite(k)) return blackbodyColor(k).getHex();
@@ -401,6 +416,10 @@ let sunLight;
 let celestialBodies = new Map();
 let orbitGroups = new Map();
 let orbitLines = new Map();
+// Planet orbits, small-body paths and the ISS trail render on their own layer
+// so the Q key can hide them all at once (camera.layers decides what's drawn)
+const ORBIT_LAYER = 1;
+let showOrbitLines = true;
 let currentZoomLevel = 'EARTH_MOON';
 let currentFocusedBody = null;
 let scaleMode = 'compressed'; // 'compressed' or 'realistic'
@@ -1090,6 +1109,7 @@ function init() {
     const aspect = window.innerWidth / window.innerHeight;
     // Massive Far plane needed for True Scale comparison view (millions of units)
     camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 10000000000); 
+    camera.layers.enable(ORBIT_LAYER); // orbit lines (toggled with Q)
     // Note: With such a large range (0.1 to 10B), we should use logarithmicDepthBuffer in renderer
 
     // Position camera to show Sun with planets extending to upper right
@@ -1185,7 +1205,7 @@ function init() {
     createStarField();
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout };
 
     // Spacetime grid removed
 
@@ -1316,6 +1336,48 @@ function init() {
     });
     window.addEventListener('keyup', (e) => {
         if (e.code === 'Space' && !isTextEntry(e.target)) e.preventDefault();
+    });
+
+    // A / D step the speed ladder down / up, same as the − / + buttons
+    // (below the slowest forward rung, A continues into reverse)
+    window.addEventListener('keydown', (e) => {
+        if (e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.code === 'KeyD') stepSimSpeed(1);
+        else if (e.code === 'KeyA') stepSimSpeed(-1);
+    });
+
+    // Q hides every orbit line and trail (pair with H for a bare view);
+    // E flies to Earth, I to the ISS (same as clicking them)
+    window.addEventListener('keydown', (e) => {
+        if (e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.code === 'KeyQ') {
+            showOrbitLines = !showOrbitLines;
+            camera.layers.toggle(ORBIT_LAYER);
+        } else if ((e.code === 'KeyE' || e.code === 'KeyI') && viewMode === 'map') {
+            const name = e.code === 'KeyE' ? 'Earth' : 'ISS';
+            // The ISS has no position until its TLE loads
+            if (name === 'Earth' || celestialBodies.get(name)?.mesh.visible) focusOnBody(name);
+        }
+    });
+
+    // W / S spread out / compress the distance scale while held; the motion
+    // eases in and out (updateScaleKeys), ignoring the OS key auto-repeat
+    window.addEventListener('keydown', (e) => {
+        if ((e.code !== 'KeyW' && e.code !== 'KeyS') || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        scaleKeys[e.code] = true;
+    });
+    window.addEventListener('keyup', (e) => { if (e.code in scaleKeys) scaleKeys[e.code] = false; });
+    window.addEventListener('blur', () => { scaleKeys.KeyW = scaleKeys.KeyS = false; });
+
+    // H hides every panel and button for clean screenshots and recordings
+    let uiHintTimer = null;
+    window.addEventListener('keydown', (e) => {
+        if (e.code !== 'KeyH' || e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        const hidden = document.body.classList.toggle('ui-hidden');
+        const hint = document.getElementById('ui-hidden-hint');
+        clearTimeout(uiHintTimer);
+        hint.classList.toggle('show', hidden);
+        if (hidden) uiHintTimer = setTimeout(() => hint.classList.remove('show'), 2000);
     });
 
     // Open playing at the default speed (also sets the slider and readout)
@@ -1899,13 +1961,21 @@ function createBodyMesh(data) {
     geometry = new THREE.SphereGeometry(visualRadius, 64, 64);
 
     if (data.type === 'star') {
-        // Real surface map if we have one (the Sun); procedural texture otherwise
+        // Real surface map if we have one (the Sun). Other stars are their
+        // temperature colour; the surface shader adds granulation, starspots
+        // and limb darkening (a baked noise texture read as stripes).
+        const hasRealMap = !!REAL_TEXTURE_FILES[data.name];
         material = new THREE.MeshBasicMaterial({
-            color: 0xffffff // White multiplier so texture shows true colors
+            color: hasRealMap ? 0xffffff : starDisplayColor(data),
+            // ACES washes saturated star colours out to pale yellow/white;
+            // show the temperature colour as-is (the Sun's map is tuned for it)
+            toneMapped: hasRealMap
         });
-        const makeFallback = () => new THREE.CanvasTexture(generateStarTexture(starDisplayColor(data), data.name.length));
-        material.map = loadRealTexture(data.name, material, makeFallback) || makeFallback();
-        enhanceStarSurface(material);
+        if (hasRealMap) {
+            const makeFallback = () => new THREE.CanvasTexture(generateStarTexture(starDisplayColor(data), data.name.length));
+            material.map = loadRealTexture(data.name, material, makeFallback) || makeFallback();
+        }
+        enhanceStarSurface(material, starSurfaceParams(data, hasRealMap));
     } else if (data.type === 'blackhole') {
         material = new THREE.MeshBasicMaterial({ 
             color: 0x000000
@@ -1977,6 +2047,7 @@ function createBodyMesh(data) {
         const starColor = data.type === 'star' ? starDisplayColor(data) : (data.emissive || data.color);
         
         mesh.add(createCorona(visualRadius, starColor));
+        if (data.type === 'star') mesh.add(createStellarLimb(visualRadius, starColor));
 
         // Diffraction spike sprite — always faces camera, gives stars a star-like look
         const spriteCanvas = generateStarSpriteTexture(starColor);
@@ -2174,6 +2245,7 @@ function createOrbitLine(radius, color, planetName) {
         depthWrite: false
     });
     const orbit = new THREE.Line(geometry, material);
+    orbit.layers.set(ORBIT_LAYER);
     scene.add(orbit);
     
     // Create an invisible ring for easier hover/click detection
@@ -3169,6 +3241,7 @@ function animate() {
     // Update spacetime fabric with gravity wells block REMOVED
 
     applyScaleTransition();
+    updateScaleKeys();
     updateConstellationIntro();
     refreshAUAnchors();
     updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies);
@@ -4347,6 +4420,23 @@ function findNearestBodyOnScreen(clientX, clientY, bodyMap, radiusPx) {
     return nearestName;
 }
 
+// Tiny objects (the ISS, small bodies) are a few pixels across or less, so a
+// ray through them usually hits what's behind (Earth) and the screen-space
+// fallback never ran. Check them first — but only if they're nearer than the
+// ray's hit, so the ISS behind Earth isn't picked through the planet.
+const _tinyPickPos = new THREE.Vector3();
+function findTinyBodyInFront(clientX, clientY, radiusPx, intersects) {
+    if (viewMode === 'sizeCompare') return null;
+    const hitDistance = intersects.length ? intersects[0].distance : Infinity;
+    const candidates = new Map();
+    celestialBodies.forEach((body, name) => {
+        if (body.type !== 'satellite' && body.type !== 'smallbody') return;
+        body.mesh.getWorldPosition(_tinyPickPos);
+        if (camera.position.distanceTo(_tinyPickPos) < hitDistance) candidates.set(name, body);
+    });
+    return candidates.size ? findNearestBodyOnScreen(clientX, clientY, candidates, radiusPx) : null;
+}
+
 function getBodyNameFromIntersection(intersection) {
     let current = intersection && intersection.object;
     while (current) {
@@ -4394,9 +4484,9 @@ function onClick(event) {
 
     const intersects = raycaster.intersectObjects(visibleMeshes, true);
 
-    let bodyName = intersects.length > 0
-        ? getBodyNameFromIntersection(intersects[0])
-        : null;
+    let bodyName = findTinyBodyInFront(event.clientX, event.clientY,
+        isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX, intersects)
+        || (intersects.length > 0 ? getBodyNameFromIntersection(intersects[0]) : null);
 
     // Geometry can be sub-pixel at stellar distances. Use a screen-space target
     // as a fallback for every pointer, with a finger-sized radius on touch.
@@ -4429,7 +4519,7 @@ function onClick(event) {
 
     // Only check for orbit line clicks (focus on the body) as a fallback if no actual body mesh was clicked
     if (viewMode !== 'sizeCompare') {
-        const hitTargets = Array.from(orbitLines.values()).map(obj => obj.hitTarget);
+        const hitTargets = showOrbitLines ? Array.from(orbitLines.values()).map(obj => obj.hitTarget) : [];
         const orbitIntersects = raycaster.intersectObjects(hitTargets);
         if (orbitIntersects.length > 0) {
             const hitTarget = orbitIntersects[0].object;
@@ -5170,9 +5260,8 @@ function updateHoverState(clientX, clientY) {
 
     const intersects = raycaster.intersectObjects(visibleMeshes, true);
     const bodies = viewMode === 'sizeCompare' ? sizeComparisonObjects : celestialBodies;
-    const exactBodyName = intersects.length > 0
-        ? getBodyNameFromIntersection(intersects[0])
-        : null;
+    const exactBodyName = findTinyBodyInFront(clientX, clientY, MOUSE_BODY_HIT_RADIUS_PX, intersects)
+        || (intersects.length > 0 ? getBodyNameFromIntersection(intersects[0]) : null);
     const nearbyBodyName = exactBodyName || findNearestBodyOnScreen(
         clientX,
         clientY,
@@ -5181,7 +5270,7 @@ function updateHoverState(clientX, clientY) {
     );
     
     // Also check for orbit line intersections (using hit targets)
-    const hitTargets = Array.from(orbitLines.values()).map(obj => obj.hitTarget);
+    const hitTargets = showOrbitLines ? Array.from(orbitLines.values()).map(obj => obj.hitTarget) : [];
     const orbitIntersects = raycaster.intersectObjects(hitTargets);
 
     // Check for constellation label intersections
@@ -5461,8 +5550,25 @@ function getStarLayoutInfo() {
     return starLayoutInfo;
 }
 
-// Target distances for a scale value (see the comment on SCALE_PRESETS)
+// Target distances for a scale value. Each body glides geometrically between
+// its no-clip layout at Max (sv 0) and its true layout at Realistic (sv 1), so
+// everything starts and stops moving together (inner bodies just move less).
+// Using "true distance × scale, clamped to a floor" directly left inner planets
+// and moons parked on their floors for much of the slider while the outer
+// system kept moving. Gaps between neighbours are log-concave along this path,
+// so they're never smaller than at the two (clip-free) ends.
 function computeScaleLayout(sv) {
+    const a = computeRawScaleLayout(0), b = computeRawScaleLayout(1);
+    const geo = (x, y) => x * Math.pow(y / x, sv);
+    const layout = { k: geo(a.k, b.k), planets: new Map(), moons: new Map(), starU: geo(a.starU, b.starU) };
+    b.planets.forEach((r, n) => layout.planets.set(n, geo(a.planets.get(n) ?? r, r)));
+    b.moons.forEach((r, n) => layout.moons.set(n, geo(a.moons.get(n) ?? r, r)));
+    return layout;
+}
+
+// Layout from "true distance × scale" with no-clip floors; used for the two
+// ends of the slider (see SCALE_PRESETS)
+function computeRawScaleLayout(sv) {
     const lerpLog = ([lo, hi], t) => lo * Math.pow(hi / lo, t);
     const k = lerpLog(PLANET_UNITS_PER_AU, sv);
     const km = lerpLog(MOON_SCALE, sv);
@@ -5554,6 +5660,31 @@ function applyLayout(layout) {
 // looks even), apply directly while the slider is dragged.
 const SCALE_TRANSITION_MS = 1600;
 let scaleTransition = null;
+
+// W / S: hold to glide the scale. Speed eases toward the target and back to
+// zero on release, so moves start and stop smoothly (a tap is a small nudge).
+const SCALE_KEY_RATE = 0.2;   // slider units per second at full speed (0→1 in ~5 s)
+const SCALE_KEY_EASE = 0.2;   // time constant of each of two smoothing stages
+const scaleKeys = { KeyW: false, KeyS: false };
+let scaleKeyDrive = 0, scaleKeyVelocity = 0, scaleKeyLastTime = 0;
+function updateScaleKeys() {
+    const now = performance.now();
+    const dt = Math.min((now - scaleKeyLastTime) / 1000, 0.1);
+    scaleKeyLastTime = now;
+    const input = viewMode === 'map' ? (scaleKeys.KeyW ? 1 : 0) - (scaleKeys.KeyS ? 1 : 0) : 0;
+    // Two first-order stages in series: speed follows an S-curve, so the
+    // acceleration eases in too (one stage lurches into motion)
+    const blend = 1 - Math.exp(-dt / SCALE_KEY_EASE);
+    scaleKeyDrive += (input * SCALE_KEY_RATE - scaleKeyDrive) * blend;
+    scaleKeyVelocity += (scaleKeyDrive - scaleKeyVelocity) * blend;
+    if (Math.abs(scaleKeyVelocity) < 1e-4 && Math.abs(scaleKeyDrive) < 1e-4 && !input) {
+        scaleKeyDrive = scaleKeyVelocity = 0;
+        return;
+    }
+    const next = THREE.MathUtils.clamp(scaleValue + scaleKeyVelocity * dt, 0, 1);
+    if (next === scaleValue) { scaleKeyDrive = scaleKeyVelocity = 0; return; } // at an end
+    setScaleValue(next, false);
+}
 
 function setScaleValue(sv, animate) {
     scaleValue = THREE.MathUtils.clamp(sv, 0, 1);
@@ -6200,10 +6331,11 @@ function createSizeComparisonView() {
         // Create mesh for this object
         const mesh = createBodyMesh(fullData);
         
-        // Strip atmosphere/cloud/glow children — we only want the solid sphere and rings.
+        // Strip atmosphere/cloud/glow children — we only want the solid sphere,
+        // rings and a star's limb plasma.
         for (let i = mesh.children.length - 1; i >= 0; i--) {
             const child = mesh.children[i];
-            if (child.geometry && child.geometry.type === 'RingGeometry') {
+            if ((child.geometry && child.geometry.type === 'RingGeometry') || child.name === 'stellarLimb') {
                 continue;
             }
             mesh.remove(child);
@@ -6387,6 +6519,8 @@ function updateUserMarker(earthMesh) {
     userMarker.scale.setScalar(Math.min(1, camera.position.distanceTo(_markerWorldPos) / (radius * 2)));
 }
 
+const STAR_SPIKE_FADE_PX = [4, 18];
+const _starWorldScale = new THREE.Vector3();
 function updateStarMeshEffects(starMesh, time) {
     if (!starMesh) return;
     
@@ -6416,16 +6550,19 @@ function updateStarMeshEffects(starMesh, time) {
             / (viewportHeight * projectionScale);
     }
     
-    // Smooth transition from 7.5x radius down to 2.5x radius
-    const fadeStart = visualRadius * 7.5;
-    const fadeEnd = visualRadius * 2.5;
-    
-    let fadeFactor = 1.0;
-    if (dist <= fadeEnd) {
-        fadeFactor = 0.0;
-    } else if (dist < fadeStart) {
-        fadeFactor = (dist - fadeEnd) / (fadeStart - fadeEnd);
-    }
+    // Diffraction spikes belong to unresolved points of light: fade them out
+    // as the disc grows on screen (radius STAR_SPIKE_FADE_PX[0] → [1] pixels)
+    starMesh.getWorldScale(_starWorldScale);
+    const pixelRadius = camera.isPerspectiveCamera
+        ? (visualRadius * _starWorldScale.x / Math.max(dist, 1e-9))
+            * camera.projectionMatrix.elements[5] * Math.max(window.innerHeight, 1) / 2
+        : Infinity;
+    const [spikeFull, spikeGone] = STAR_SPIKE_FADE_PX;
+    const fadeFactor = 1 - THREE.MathUtils.smoothstep(pixelRadius, spikeFull, spikeGone);
+    // The limb plasma is invisible (and wasted fill) on a star a few pixels across
+    starMesh.children.forEach(child => {
+        if (child.name === 'stellarLimb') child.visible = pixelRadius > 4;
+    });
     
     starMesh.children.forEach(child => {
         if (child.name === 'starSpike' && child.material) {
@@ -8215,7 +8352,9 @@ function flyToEarth(showEarthInfo = false) {
 
     // On mobile portrait, zoom in closer and adjust the angle to rotate the line steeply upward
     const isMobilePortrait = window.innerWidth < 768 && window.innerHeight > window.innerWidth;
-    const wideViewDistance = isMobilePortrait ? 230 : 250;
+    // Tuned for Earth's orbit at 100 units; follow the current distance scale
+    const orbitScale = Math.max((earthBody.orbitRadius || 100) / 100, 0.3);
+    const wideViewDistance = (isMobilePortrait ? 230 : 250) * orbitScale;
 
     // On mobile portrait, we look from closer to the Z=0 plane (Z multiplier = 0.18)
     // and further left (X multiplier = -0.85) to rotate the lineup of planets steeply

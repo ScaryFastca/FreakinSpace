@@ -178,6 +178,7 @@ export function updateISS(earthMesh, simDate, visible = true) {
         );
         trailLine.name = 'ISS trail';
         trailLine.raycast = () => {}; // decoration only; Lines hit-test within 1 unit
+        trailLine.layers.set(1); // main.js ORBIT_LAYER: hidden with the Q key
     }
     if (issGroup.parent !== earthMesh) {
         earthMesh.add(issGroup);

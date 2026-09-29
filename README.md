@@ -84,7 +84,11 @@ no framework, no account.
 | North up / level horizon | Compass and horizon buttons (top left) | Same buttons |
 | Select / fly to | Click an object or pick it from the side panel | Tap |
 | Play / pause | Space, or the play button | Play button |
-| Time speed | Scroll over the time panel, − / + buttons, presets | Buttons and presets |
+| Time speed | A / D keys, scroll over the time panel, − / + buttons, presets | Buttons and presets |
+| Spread out / compress distances | W / S, or the Scale slider | Scale slider |
+| Hide / show orbit lines | Q | – |
+| Fly to Earth / the ISS | E / I | – |
+| Hide / show the interface | H | – |
 
 On phones, a bottom bar opens the object list, time controls and settings.
 
