@@ -1,14 +1,14 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=108';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=109';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=108';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=108';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=108';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=108';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=109';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=109';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=109';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=109';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=108';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=108';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=109';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=109';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -287,7 +287,16 @@ function calculatePlanetAngle(planetData, daysSinceJ2000) {
     return longitude * Math.PI / 180;
 }
 
-// Returns the Moon's local angle (radians) relative to Earth's rotated frame.
+// Every orbit angle here uses the same sense as Object3D.rotation.y: a body
+// at angle θ sits at (cos θ, 0, −sin θ), which runs counter-clockwise seen
+// from ecliptic north (+Y) — the way the planets and regular moons really go.
+// (Aligned mode used (cos, 0, +sin) and so ran every orbit clockwise.)
+function orbitOffset(angle, radius, out) {
+    return out.set(Math.cos(angle) * radius, 0, -Math.sin(angle) * radius);
+}
+
+// Returns the Moon's angle (radians) in Earth's orbit-group frame, whose +X
+// points away from the Sun: geocentric longitude minus Earth's heliocentric one.
 function calculateMoonAngle(daysSinceJ2000) {
     const T = daysSinceJ2000 / 36525; // Julian centuries
     const moonEl  = ORBITAL_ELEMENTS['Moon'];
@@ -317,9 +326,7 @@ function calculateMoonAngle(daysSinceJ2000) {
     if (moonLon  < 0) moonLon  += 360;
     if (earthLon < 0) earthLon += 360;
     
-    // Moon's geocentric longitude vs Earth's heliocentric longitude.
-    // Earth's orbit group aligns +X away from the sun.
-    let localAngle = earthLon - moonLon;
+    let localAngle = moonLon - earthLon;
     return ((localAngle % 360) + 360) % 360 * Math.PI / 180;
 }
 
@@ -351,7 +358,7 @@ function getSimulatedPhysicalPosition(bodyData) {
             : calculateAlignedOrbitAngle(bodyData);
         return {
             x: Math.cos(angle) * bodyData.distance,
-            z: (orbitalMode === 'realistic' ? -1 : 1) * Math.sin(angle) * bodyData.distance
+            z: -Math.sin(angle) * bodyData.distance
         };
     }
 
@@ -369,7 +376,7 @@ function getSimulatedPhysicalPosition(bodyData) {
                 ? calculateMoonAngle(daysSinceJ2000)
                 : calculatePlanetAngle(bodyData, daysSinceJ2000);
             const localX = Math.cos(localAngle) * bodyData.distance;
-            const localZ = Math.sin(localAngle) * bodyData.distance;
+            const localZ = -Math.sin(localAngle) * bodyData.distance;
 
             // Match the parent's orbit-group Y rotation used by the scene.
             offsetX = Math.cos(parentAngle) * localX + Math.sin(parentAngle) * localZ;
@@ -377,7 +384,7 @@ function getSimulatedPhysicalPosition(bodyData) {
         } else {
             const angle = calculateAlignedOrbitAngle(bodyData);
             offsetX = Math.cos(angle) * bodyData.distance;
-            offsetZ = Math.sin(angle) * bodyData.distance;
+            offsetZ = -Math.sin(angle) * bodyData.distance;
         }
 
         return {
@@ -3174,7 +3181,7 @@ const MOON_TIDAL_OFFSET = {
 function tidalLockRotationY(moonBody, orbitAngle) {
     const offset = MOON_TIDAL_OFFSET[moonBody.data.name] || 0;
     const parentSpin = moonBody.parent ? moonBody.parent.rotation.y : 0;
-    return -orbitAngle + offset - parentSpin;
+    return orbitAngle + offset - parentSpin; // orbitAngle in the rotation.y sense (orbitOffset)
 }
 
 function animate() {
@@ -3253,7 +3260,7 @@ function animate() {
         if (body.orbitGroup && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Planet orbiting sun (only in aligned mode; realistic mode uses orbitGroup.rotation.y)
             const angle = calculateAlignedOrbitAngle(body.data);
-            _animLocalPosition.set(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+            orbitOffset(angle, body.orbitRadius, _animLocalPosition);
             if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
             body.mesh.position.copy(_animLocalPosition);
         }
@@ -3261,7 +3268,7 @@ function animate() {
         if (body.parent && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Moon orbiting planet (only in aligned mode; realistic mode sets positions in updateRealisticPositions)
             const angle = calculateAlignedOrbitAngle(body.data);
-            _animLocalPosition.set(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+            orbitOffset(angle, body.orbitRadius, _animLocalPosition);
             if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
             body.mesh.position.copy(_animLocalPosition);
             // Tidal locking: keep the same face toward the planet as it orbits
@@ -5824,6 +5831,10 @@ function updateRealisticPositions(date, phase = 'all') {
             if (body && body.orbitGroup && planetData.orbitalPeriod) {
                 const angle = calculatePlanetAngle(planetData, daysSinceJ2000);
                 body.orbitGroup.rotation.y = angle;
+                // The planet must sit on the group's +X; Aligned mode moves it
+                // around the circle, and switching modes used to leave it there
+                // (every planet at a wrong longitude, the Moon's phase ~90° off)
+                body.mesh.position.set(body.orbitRadius, 0, 0);
             }
         });
     }
@@ -5841,7 +5852,7 @@ function updateRealisticPositions(date, phase = 'all') {
                             ? calculateMoonAngle(daysSinceJ2000)
                             : calculatePlanetAngle(moonData, daysSinceJ2000);
                         const moonDist = moonBody.orbitRadius ?? scaleDistance(moonData.distance, true);
-                        _animLocalPosition.set(Math.cos(moonAngle) * moonDist, 0, Math.sin(moonAngle) * moonDist);
+                        orbitOffset(moonAngle, moonDist, _animLocalPosition);
                         _animLocalPosition.applyAxisAngle(_animYAxis, -body.mesh.rotation.y);
                         moonBody.mesh.position.copy(_animLocalPosition);
                         // Tidal locking: same face toward the planet every orbit
@@ -8320,7 +8331,7 @@ function flyToEarth(showEarthInfo = false) {
                 const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
                 const period = body.data.orbitalPeriod || 365.25;
                 const angle = (elapsedDays / period) * Math.PI * 2;
-                const localPos = new THREE.Vector3(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+                const localPos = orbitOffset(angle, body.orbitRadius, new THREE.Vector3());
                 if (body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
                 body.mesh.position.copy(localPos);
             }
@@ -8328,7 +8339,7 @@ function flyToEarth(showEarthInfo = false) {
                 const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
                 const period = body.data.orbitalPeriod || 27.3;
                 const angle = (elapsedDays / period) * Math.PI * 2;
-                const localPos = new THREE.Vector3(Math.cos(angle) * body.orbitRadius, 0, Math.sin(angle) * body.orbitRadius);
+                const localPos = orbitOffset(angle, body.orbitRadius, new THREE.Vector3());
                 if (body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
                 body.mesh.position.copy(localPos);
             }
