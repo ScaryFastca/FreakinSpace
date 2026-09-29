@@ -32,7 +32,15 @@ no framework, no account.
   every planet where it is on any date, based on JPL orbital elements
 - Two scale modes: **Compressed** so everything fits on screen, or **Realistic**
   spacing, where moons sit at their true distance (the Moon is 60 Earth radii out)
-- Moons are tidally locked, and moon shadows cross their planets during transits
+- Realistic orbits are true tilted ellipses (JPL Keplerian elements), so Mercury
+  swings between 0.31 and 0.47 AU and Saturn's rings turn edge-on to Earth when
+  they really do
+- Every planet has its real axial tilt and spin (IAU pole and rotation data):
+  Earth's seasons, Uranus on its side, Venus and Uranus spinning backwards,
+  Saturn's rings in its equatorial plane. Earth turns by sidereal time, so the
+  Sun is overhead where it really is
+- Moons are tidally locked and orbit in their planet's equatorial plane (the Moon
+  in its own 5°-tilted orbit), and moon shadows cross their planets during transits
 
 ### Watch Earth in real time
 - **The ISS, live.** Its position comes from the station's latest published orbit,

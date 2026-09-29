@@ -1,14 +1,14 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=109';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=114';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=109';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=109';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=109';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=109';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=114';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=114';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=114';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=114';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=109';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=109';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=114';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=114';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -264,9 +264,60 @@ const ORBITAL_ELEMENTS = {
 const J2000 = new Date('2000-01-01T12:00:00Z');
 const MS_PER_DAY = 86400000;
 
-// Returns heliocentric ecliptic longitude (radians) for a planet at given days-since-J2000.
-// Uses precise JPL mean motion rates.
+// Keplerian elements for the planets (Earth = Earth-Moon barycentre), J2000
+// ecliptic, valid 1800–2050, from JPL's "Approximate Positions of the Planets"
+// (Standish): [value, rate per century] for a (AU), e, I, L, ϖ (longitude of
+// perihelion), Ω (ascending node), angles in degrees. Solving Kepler's
+// equation gives true distance, longitude and height above the ecliptic:
+// eccentric, tilted orbits instead of circles (Mercury's distance swings
+// 0.31–0.47 AU and its orbit tilts 7°; Saturn's position was off by up to 6°).
+const PLANET_KEPLER = {
+    Mercury: [[0.38709927, 0.00000037], [0.20563593, 0.00001906], [7.00497902, -0.00594749], [252.25032350, 149472.67411175], [77.45779628, 0.16047689], [48.33076593, -0.12534081]],
+    Venus:   [[0.72333566, 0.00000390], [0.00677672, -0.00004107], [3.39467605, -0.00078890], [181.97909950, 58517.81538729], [131.60246718, 0.00268329], [76.67984255, -0.27769418]],
+    Earth:   [[1.00000261, 0.00000562], [0.01671123, -0.00004392], [-0.00001531, -0.01294668], [100.46457166, 35999.37244981], [102.93768193, 0.32327364], [0, 0]],
+    Mars:    [[1.52371034, 0.00001847], [0.09339410, 0.00007882], [1.84969142, -0.00813131], [-4.55343205, 19140.30268499], [-23.94362959, 0.44441088], [49.55953891, -0.29257343]],
+    Jupiter: [[5.20288700, -0.00011607], [0.04838624, -0.00013253], [1.30439695, -0.00183714], [34.39644051, 3034.74612775], [14.72847983, 0.21252668], [100.47390909, 0.20469106]],
+    Saturn:  [[9.53667594, -0.00125060], [0.05386179, -0.00050991], [2.48599187, 0.00193609], [49.95424423, 1222.49362201], [92.59887831, -0.41897216], [113.66242448, -0.28867794]],
+    Uranus:  [[19.18916464, -0.00196176], [0.04725744, -0.00004397], [0.77263783, -0.00242939], [313.23810451, 428.48202785], [170.95427630, 0.40805281], [74.01692503, 0.04240589]],
+    Neptune: [[30.06992276, 0.00026291], [0.00859048, 0.00005105], [1.77004347, 0.00035372], [-55.12002969, 218.45945325], [44.96476227, -0.32241464], [131.78422574, -0.00508664]]
+};
+function planetElements(name, daysSinceJ2000) {
+    const k = PLANET_KEPLER[name];
+    if (!k) return null;
+    const T = daysSinceJ2000 / 36525;
+    const [a, e, I, L, peri, node] = k.map(([v, rate]) => v + rate * T);
+    return { a, e, I, L, peri, node };
+}
+// Point on an orbit at eccentric anomaly E (radians) → J2000 ecliptic AU
+function orbitPointAU(el, E, out) {
+    const rad = Math.PI / 180;
+    const w = (el.peri - el.node) * rad, O = el.node * rad, I = el.I * rad;
+    const xp = el.a * (Math.cos(E) - el.e), yp = el.a * Math.sqrt(1 - el.e * el.e) * Math.sin(E);
+    const cw = Math.cos(w), sw = Math.sin(w), cO = Math.cos(O), sO = Math.sin(O), cI = Math.cos(I), sI = Math.sin(I);
+    return out.set(
+        (cw * cO - sw * sO * cI) * xp + (-sw * cO - cw * sO * cI) * yp,
+        (cw * sO + sw * cO * cI) * xp + (-sw * sO + cw * cO * cI) * yp,
+        (sw * sI) * xp + (cw * sI) * yp
+    );
+}
+// Heliocentric J2000 ecliptic position (AU) of a planet
+function planetHelioAU(name, daysSinceJ2000, out) {
+    const el = planetElements(name, daysSinceJ2000);
+    if (!el) return null;
+    const M = THREE.MathUtils.euclideanModulo(el.L - el.peri + 180, 360) - 180;
+    const Mr = M * Math.PI / 180;
+    let E = Mr + el.e * Math.sin(Mr);
+    for (let i = 0; i < 8; i++) E -= (E - el.e * Math.sin(E) - Mr) / (1 - el.e * Math.cos(E));
+    return orbitPointAU(el, E, out);
+}
+
+// Returns heliocentric ecliptic longitude (radians): the true longitude from
+// the Keplerian orbit for planets; a fractional orbit for other moons
+const _keplerPos = new THREE.Vector3();
 function calculatePlanetAngle(planetData, daysSinceJ2000) {
+    if (planetHelioAU(planetData.name, daysSinceJ2000, _keplerPos)) {
+        return THREE.MathUtils.euclideanModulo(Math.atan2(_keplerPos.y, _keplerPos.x), 2 * Math.PI);
+    }
     const el = ORBITAL_ELEMENTS[planetData.name];
     const L0   = el ? el.L0   : 0;
     const rate = el ? el.rate : (360 / (planetData.orbitalPeriod || 365.25)) * 36525;
@@ -293,6 +344,115 @@ function calculatePlanetAngle(planetData, daysSinceJ2000) {
 // (Aligned mode used (cos, 0, +sin) and so ran every orbit clockwise.)
 function orbitOffset(angle, radius, out) {
     return out.set(Math.cos(angle) * radius, 0, -Math.sin(angle) * radius);
+}
+
+// ── Axial tilt and spin ─────────────────────────────────────────────────
+// North pole direction (J2000 RA/Dec) and prime-meridian angle W = W0 + rate·d
+// (deg, d = days since J2000) from the IAU WGCCRE report. The pole is fixed in
+// space, so as a planet orbits it gives seasons; W's sign gives the spin
+// sense (Venus and Uranus turn backwards). Earth uses sidereal time instead.
+// Texture longitude 0 (the map's centre) sits on the mesh's local +X, which
+// W puts at the IAU prime meridian (Greenwich for Earth).
+const BODY_POLES = {
+    Sun:     { ra: 286.13,     dec: 63.87,     W0: 84.176,  rate: 14.1844 },
+    Mercury: { ra: 281.0103,   dec: 61.4155,   W0: 329.5988, rate: 6.1385108 },
+    Venus:   { ra: 272.76,     dec: 67.16,     W0: 160.20,  rate: -1.4813688 },
+    Earth:   { ra: 0,          dec: 90,        earth: true },
+    Mars:    { ra: 317.68143,  dec: 52.88650,  W0: 176.630, rate: 350.89198226 },
+    Jupiter: { ra: 268.056595, dec: 64.495303, W0: 284.95,  rate: 870.5360000 },
+    Saturn:  { ra: 40.589,     dec: 83.537,    W0: 38.90,   rate: 810.7939024 },
+    Uranus:  { ra: 257.311,    dec: -15.175,   W0: 203.81,  rate: -501.1600928 },
+    Neptune: { ra: 299.36,     dec: 43.46,     W0: 249.978, rate: 541.1397757 }
+};
+const OBLIQUITY_J2000 = 23.4392911 * Math.PI / 180;
+const _yAxis = new THREE.Vector3(0, 1, 0);
+// J2000 equatorial unit vector → app frame (ecliptic plane XZ, +Y ecliptic north)
+function equatorialToApp(x, y, z, out) {
+    const c = Math.cos(OBLIQUITY_J2000), s = Math.sin(OBLIQUITY_J2000);
+    const ey = y * c + z * s, ez = -y * s + z * c;
+    return out.set(x, ez, -ey);
+}
+// Quaternion taking the mesh's local +Y to the pole and local +X to the IAU
+// node (where the body's equator crosses Earth's; the vernal equinox for Earth)
+const poleFrames = new Map();
+function poleFrame(name) {
+    if (poleFrames.has(name)) return poleFrames.get(name);
+    const p = BODY_POLES[name];
+    let frame = null;
+    if (p) {
+        const ra = p.ra * Math.PI / 180, dec = p.dec * Math.PI / 180;
+        const px = Math.cos(dec) * Math.cos(ra), py = Math.cos(dec) * Math.sin(ra), pz = Math.sin(dec);
+        const pole = equatorialToApp(px, py, pz, new THREE.Vector3()).normalize();
+        const nodeLen = Math.hypot(px, py);
+        const node = nodeLen > 1e-9
+            ? equatorialToApp(-py / nodeLen, px / nodeLen, 0, new THREE.Vector3())
+            : new THREE.Vector3(1, 0, 0);
+        const zAxis = new THREE.Vector3().crossVectors(node, pole);
+        frame = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(node, pole, zAxis));
+        frame.obliquity = Math.acos(THREE.MathUtils.clamp(pole.y, -1, 1)); // tilt vs the ecliptic
+    }
+    poleFrames.set(name, frame);
+    return frame;
+}
+// Spin angle (radians) about the pole at the simulation date
+function bodySpinAngle(name) {
+    const p = BODY_POLES[name];
+    if (!p) return celestialBodies.get(name)?.mesh.rotation.y ?? 0;
+    const d = (simDate - J2000) / MS_PER_DAY;
+    const deg = p.earth
+        ? 280.46061837 + 360.98564736629 * d // Greenwich mean sidereal time
+        : p.W0 + p.rate * d;
+    return THREE.MathUtils.euclideanModulo(deg, 360) * Math.PI / 180;
+}
+// Orientation relative to the body's parent (its orbit group, which Realistic
+// mode rotates): world = pole frame · spin
+const _orientParentQ = new THREE.Quaternion();
+const _orientSpinQ = new THREE.Quaternion();
+function bodyLocalQuaternion(name, out) {
+    const body = celestialBodies.get(name);
+    const frame = poleFrame(name);
+    if (!body || !frame) return out.setFromAxisAngle(_yAxis, bodySpinAngle(name));
+    out.copy(frame).multiply(_orientSpinQ.setFromAxisAngle(_yAxis, bodySpinAngle(name)));
+    if (body.mesh.parent) out.premultiply(body.mesh.parent.getWorldQuaternion(_orientParentQ).invert());
+    return out;
+}
+// Apply tilt + spin to a planet (map view); rings lie in its equatorial plane
+function orientBody(name) {
+    const body = celestialBodies.get(name);
+    if (!body || !poleFrame(name)) return false;
+    bodyLocalQuaternion(name, body.mesh.quaternion);
+    const spin = bodySpinAngle(name);
+    body.mesh.userData.spin = spin;
+    for (const ringName of ['rings', 'outerRing']) {
+        body.mesh.getObjectByName(ringName)?.rotation.set(Math.PI / 2, -spin, 0);
+    }
+    return true;
+}
+
+// Moons: most big moons orbit in their planet's equatorial plane, so their
+// offset is set in the tilted frame and only the spin is undone. Earth's Moon
+// orbits ~5° from the ecliptic instead (not Earth's 23° equator), so its
+// offset is built in the orbit-group frame and carried through the whole
+// tilt + spin. `angle` is in the orbit-group (or equatorial) frame, rotation.y
+// sense; `lat` is the Moon's ecliptic latitude.
+const ECLIPTIC_MOONS = new Set(['Moon']);
+const _moonQ = new THREE.Quaternion();
+const _moonYawQ = new THREE.Quaternion();
+function placeMoon(moonBody, angle, dist, lat = 0) {
+    const parentName = moonBody.parent?.userData?.name;
+    const offset = MOON_TIDAL_OFFSET[moonBody.data.name] || 0;
+    const mesh = moonBody.mesh;
+    if (ECLIPTIC_MOONS.has(moonBody.data.name) && poleFrame(parentName)) {
+        bodyLocalQuaternion(parentName, _moonQ).invert();
+        mesh.position.set(Math.cos(lat) * Math.cos(angle) * dist, Math.sin(lat) * dist,
+            -Math.cos(lat) * Math.sin(angle) * dist).applyQuaternion(_moonQ);
+        if (viewMode !== 'sizeCompare') mesh.quaternion.copy(_moonQ).multiply(_moonYawQ.setFromAxisAngle(_yAxis, angle + offset));
+    } else {
+        const spin = parentName ? bodySpinAngle(parentName) : 0;
+        orbitOffset(angle, dist, mesh.position).applyAxisAngle(_yAxis, -spin);
+        // Tidal locking: the same face toward the planet every orbit
+        if (viewMode !== 'sizeCompare') mesh.quaternion.setFromAxisAngle(_yAxis, angle + offset - spin);
+    }
 }
 
 // Returns the Moon's angle (radians) in Earth's orbit-group frame, whose +X
@@ -326,8 +486,17 @@ function calculateMoonAngle(daysSinceJ2000) {
     if (moonLon  < 0) moonLon  += 360;
     if (earthLon < 0) earthLon += 360;
     
-    let localAngle = moonLon - earthLon;
+    // Relative to the orbit group's angle (Earth's Keplerian longitude)
+    const groupLon = calculatePlanetAngle({ name: 'Earth' }, daysSinceJ2000) * 180 / Math.PI;
+    let localAngle = moonLon - groupLon;
     return ((localAngle % 360) + 360) % 360 * Math.PI / 180;
+}
+
+// Moon's ecliptic latitude (radians): its orbit is inclined ~5.1° to the
+// ecliptic, crossing it at nodes that regress every 18.6 years
+function calculateMoonLatitude(daysSinceJ2000) {
+    const F = (93.2721 + 483202.0175 * daysSinceJ2000 / 36525) * Math.PI / 180;
+    return 5.128 * Math.PI / 180 * Math.sin(F);
 }
 
 // Aligned mode starts every orbit on +X and advances from the selected
@@ -352,6 +521,10 @@ function getSimulatedPhysicalPosition(bodyData) {
     if (!bodyData) return null;
     if (bodyData.name === 'Sun') return { x: 0, z: 0 };
 
+    if (bodyData.type === 'planet' && orbitalMode === 'realistic'
+        && planetHelioAU(bodyData.name, (simDate - J2000) / MS_PER_DAY, _keplerPos)) {
+        return { x: _keplerPos.x * AU, z: -_keplerPos.y * AU };
+    }
     if (bodyData.type === 'planet') {
         const angle = orbitalMode === 'realistic'
             ? calculatePlanetAngle(bodyData, (simDate - J2000) / MS_PER_DAY)
@@ -1085,6 +1258,11 @@ let lastControlsDistance = null;
 let lastHomeIndicatorUpdate = 0;
 const _animLocalPosition = new THREE.Vector3();
 const _animYAxis = new THREE.Vector3(0, 1, 0);
+const _compareTiltAxis = new THREE.Vector3(0, 0, 1); // size comparison: lean planets across the screen
+const _compareSpinQ = new THREE.Quaternion();
+const _compareLeanQ = new THREE.Quaternion();
+const _compareTipAxis = new THREE.Vector3(1, 0, 0);
+const COMPARE_VIEW_TIP = 0.2; // radians
 const _animEarthPosition = new THREE.Vector3();
 const _animDirectionToSun = new THREE.Vector3();
 const _animWorldPosition = new THREE.Vector3();
@@ -2087,7 +2265,7 @@ function createBodyMesh(data) {
         const rings = new THREE.Mesh(ringGeo, ringMat);
         rings.name = 'rings';
         rings.rotation.order = 'YXZ';
-        rings.rotation.x = Math.PI / 2.3;
+        rings.rotation.x = Math.PI / 2; // equatorial; the planet mesh carries the tilt
         mesh.add(rings);
         
         // Outer faint ring
@@ -2101,7 +2279,7 @@ function createBodyMesh(data) {
         const outerRing = new THREE.Mesh(outerRingGeo, outerRingMat);
         outerRing.name = 'outerRing';
         outerRing.rotation.order = 'YXZ';
-        outerRing.rotation.x = Math.PI / 2.3;
+        outerRing.rotation.x = Math.PI / 2;
         mesh.add(outerRing);
     }
 
@@ -3178,11 +3356,6 @@ function createRandomStarField() {
 const MOON_TIDAL_OFFSET = {
     Moon: 0 // tune if the Moon's near side ends up pointing the wrong way
 };
-function tidalLockRotationY(moonBody, orbitAngle) {
-    const offset = MOON_TIDAL_OFFSET[moonBody.data.name] || 0;
-    const parentSpin = moonBody.parent ? moonBody.parent.rotation.y : 0;
-    return orbitAngle + offset - parentSpin; // orbitAngle in the rotation.y sense (orbitOffset)
-}
 
 function animate() {
     animationId = requestAnimationFrame(animate);
@@ -3251,6 +3424,7 @@ function animate() {
     updateScaleKeys();
     updateConstellationIntro();
     refreshAUAnchors();
+    updateOrbitLineShapes();
     updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies);
 
     // Animate orbits
@@ -3260,27 +3434,20 @@ function animate() {
         if (body.orbitGroup && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Planet orbiting sun (only in aligned mode; realistic mode uses orbitGroup.rotation.y)
             const angle = calculateAlignedOrbitAngle(body.data);
-            orbitOffset(angle, body.orbitRadius, _animLocalPosition);
-            if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
-            body.mesh.position.copy(_animLocalPosition);
+            orbitOffset(angle, body.orbitRadius, body.mesh.position);
         }
 
         if (body.parent && body.orbitSpeed && orbitalMode !== 'realistic') {
             // Moon orbiting planet (only in aligned mode; realistic mode sets positions in updateRealisticPositions)
-            const angle = calculateAlignedOrbitAngle(body.data);
-            orbitOffset(angle, body.orbitRadius, _animLocalPosition);
-            if (body.parent) _animLocalPosition.applyAxisAngle(_animYAxis, -body.parent.rotation.y);
-            body.mesh.position.copy(_animLocalPosition);
-            // Tidal locking: keep the same face toward the planet as it orbits
-            if (viewMode !== 'sizeCompare') {
-                body.mesh.rotation.y = tidalLockRotationY(body, angle);
-            }
+            placeMoon(body, calculateAlignedOrbitAngle(body.data), body.orbitRadius);
         }
 
         // Rotate bodies
         if (body.type === 'moon' && viewMode !== 'sizeCompare') {
             // Moons are tidally locked in map view; their rotation is set alongside
             // their orbital position (aligned: above; realistic: updateRealisticPositions).
+        } else if (viewMode === 'map' && orientBody(name)) {
+            // Tilt + spin from the IAU pole and rotation model (orientBody)
         } else if (body.data.rotationPeriod) {
             if (viewMode === 'sizeCompare') {
                 body.mesh.rotation.y += (0.002 * frameScale) / body.data.rotationPeriod;
@@ -3354,13 +3521,29 @@ function animate() {
     // Animate size comparison objects (rotation only, no orbits)
     if (viewMode === 'sizeCompare' && sizeComparisonGroup && sizeComparisonGroup.visible) {
         sizeComparisonObjects.forEach((body, name) => {
-            // Rotate bodies
-            if (body.data.rotationPeriod) {
+            // Rotate bodies. Planets lean by their real axial tilt, across the
+            // screen so it reads side by side (Uranus on its side, Venus upside
+            // down), spinning in their real sense.
+            const frame = poleFrame(name);
+            if (frame) {
+                // Comparison entries carry no rotationPeriod; use the IAU rate
+                const rate = BODY_POLES[name].rate ?? 360.9856; // deg/day (Earth: sidereal)
+                const periodHours = 24 * 360 / Math.abs(rate);
+                body.mesh.userData.compareSpin = (body.mesh.userData.compareSpin || 0)
+                    + Math.sign(rate) * (0.002 * frameScale) / periodHours;
+                // ...and tip ~11° toward the viewer so rings open into an ellipse
+                body.mesh.quaternion.setFromAxisAngle(_compareTipAxis, COMPARE_VIEW_TIP)
+                    .multiply(_compareLeanQ.setFromAxisAngle(_compareTiltAxis, frame.obliquity))
+                    .multiply(_compareSpinQ.setFromAxisAngle(_yAxis, body.mesh.userData.compareSpin));
+                for (const ringName of ['rings', 'outerRing']) {
+                    body.mesh.getObjectByName(ringName)?.rotation.set(Math.PI / 2, -body.mesh.userData.compareSpin, 0);
+                }
+            } else if (body.data.rotationPeriod) {
                 body.mesh.rotation.y += (0.002 * frameScale) / body.data.rotationPeriod;
             }
 
             // Cancel out Y-rotation for Saturn's rings to prevent them from wobbling
-            if (body.data.hasRings) {
+            if (body.data.hasRings && !frame) {
                 const rings = body.mesh.getObjectByName('rings');
                 if (rings) rings.rotation.y = -body.mesh.rotation.y;
                 const outerRing = body.mesh.getObjectByName('outerRing');
@@ -5647,15 +5830,18 @@ function applyLayout(layout) {
     layout.planets.forEach((r, name) => {
         const body = celestialBodies.get(name);
         body.orbitRadius = r;
-        // Aligned orbits animate from orbitRadius; realistic orbits rotate
-        // the orbit group with the planet sitting out along +X
-        if (orbitalMode === 'realistic') body.mesh.position.set(r, 0, 0);
         const orbitObj = orbitLines.get(name);
         if (orbitObj?.baseRadius) {
-            orbitObj.visible.scale.setScalar(r / orbitObj.baseRadius);
+            // Realistic mode draws true ellipses in scene units (updateOrbitLineShapes)
+            if (!orbitObj.visible.userData.ellipse) orbitObj.visible.scale.setScalar(r / orbitObj.baseRadius);
             orbitObj.hitTarget.scale.setScalar(r / orbitObj.baseRadius);
         }
     });
+    if (orbitalMode === 'realistic') {
+        refreshAUAnchors();
+        const d = (simDate - J2000) / MS_PER_DAY;
+        layout.planets.forEach((r, name) => placeRealisticPlanet(celestialBodies.get(name), d));
+    }
     layout.moons.forEach((r, name) => { celestialBodies.get(name).orbitRadius = r; });
     getStarLayoutInfo().forEach(st => st.body.mesh.position.copy(st.posLy).multiplyScalar(layout.starU));
     currentUnitsPerAU = layout.k;
@@ -5821,21 +6007,71 @@ function toggleCameraLock() {
     }
 }
 
+// Realistic mode: the orbit group turns to the planet's true longitude and the
+// planet sits out along its +X at its true distance (mapped through the
+// current scale, so perihelion/aphelion follow the planets' spacing) and
+// height above the ecliptic. Always sets the position: Aligned mode moves
+// planets around their circles, and switching modes used to leave them there.
+function placeRealisticPlanet(body, daysSinceJ2000) {
+    const name = body.data.name;
+    if (!planetHelioAU(name, daysSinceJ2000, _keplerPos)) {
+        body.orbitGroup.rotation.y = calculatePlanetAngle(body.data, daysSinceJ2000);
+        body.mesh.position.set(body.orbitRadius, 0, 0);
+        return;
+    }
+    const r = _keplerPos.length();
+    const flat = Math.hypot(_keplerPos.x, _keplerPos.y);
+    const R = mapAUToScene(r);
+    body.orbitGroup.rotation.y = Math.atan2(_keplerPos.y, _keplerPos.x);
+    body.mesh.position.set(R * flat / r, R * _keplerPos.z / r, 0);
+}
+
+let orbitShapeSignature = '';
+function updateOrbitLineShapes() {
+    const realistic = orbitalMode === 'realistic';
+    const d = (simDate - J2000) / MS_PER_DAY;
+    // Rebuild when the mode or the scale mapping changes, or every ~5 years
+    // as the elements drift
+    const sig = realistic
+        ? [0.3, 0.7, 1, 1.5, 5, 9.5, 19, 30].map(r => mapAUToScene(r).toFixed(2)).join(',') + ':' + Math.round(d / 1826)
+        : 'aligned';
+    if (sig === orbitShapeSignature) return;
+    orbitShapeSignature = sig;
+    orbitLines.forEach((orbitObj, name) => {
+        const line = orbitObj.visible;
+        const el = realistic ? planetElements(name, d) : null;
+        if (!line.userData.circleGeometry) line.userData.circleGeometry = line.geometry;
+        if (!el) {
+            if (line.userData.ellipse) {
+                line.geometry = line.userData.circleGeometry;
+                line.userData.ellipse = false;
+            }
+            const body = celestialBodies.get(name);
+            if (body?.orbitRadius && orbitObj.baseRadius) line.scale.setScalar(body.orbitRadius / orbitObj.baseRadius);
+            return;
+        }
+        const N = 256, pts = new Float32Array((N + 1) * 3), p = new THREE.Vector3();
+        for (let i = 0; i <= N; i++) {
+            orbitPointAU(el, (i / N) * Math.PI * 2, p);
+            const r = p.length(), R = mapAUToScene(r) / r;
+            pts[i * 3] = p.x * R; pts[i * 3 + 1] = p.z * R; pts[i * 3 + 2] = -p.y * R; // ecliptic → app
+        }
+        if (line.userData.ellipse) line.geometry.dispose();
+        line.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pts, 3));
+        line.userData.ellipse = true;
+        line.scale.setScalar(1);
+    });
+}
+
 function updateRealisticPositions(date, phase = 'all') {
     const daysSinceJ2000 = (date - J2000) / MS_PER_DAY;
+    refreshAUAnchors();
 
     if (phase === 'all' || phase === 'planets') {
         realisticMoonPositionsDirty = true;
         solarSystem.children.forEach(planetData => {
             const body = celestialBodies.get(planetData.name);
-            if (body && body.orbitGroup && planetData.orbitalPeriod) {
-                const angle = calculatePlanetAngle(planetData, daysSinceJ2000);
-                body.orbitGroup.rotation.y = angle;
-                // The planet must sit on the group's +X; Aligned mode moves it
-                // around the circle, and switching modes used to leave it there
-                // (every planet at a wrong longitude, the Moon's phase ~90° off)
-                body.mesh.position.set(body.orbitRadius, 0, 0);
-            }
+            if (body && body.orbitGroup && planetData.orbitalPeriod) placeRealisticPlanet(body, daysSinceJ2000);
         });
     }
 
@@ -5852,13 +6088,8 @@ function updateRealisticPositions(date, phase = 'all') {
                             ? calculateMoonAngle(daysSinceJ2000)
                             : calculatePlanetAngle(moonData, daysSinceJ2000);
                         const moonDist = moonBody.orbitRadius ?? scaleDistance(moonData.distance, true);
-                        orbitOffset(moonAngle, moonDist, _animLocalPosition);
-                        _animLocalPosition.applyAxisAngle(_animYAxis, -body.mesh.rotation.y);
-                        moonBody.mesh.position.copy(_animLocalPosition);
-                        // Tidal locking: same face toward the planet every orbit
-                        if (viewMode !== 'sizeCompare') {
-                            moonBody.mesh.rotation.y = tidalLockRotationY(moonBody, moonAngle);
-                        }
+                        const moonLat = moonData.name === 'Moon' ? calculateMoonLatitude(daysSinceJ2000) : 0;
+                        placeMoon(moonBody, moonAngle, moonDist, moonLat);
                     }
                 });
             }
@@ -8328,20 +8559,10 @@ function flyToEarth(showEarthInfo = false) {
         // Aligned mode: update all planets and moons based on the orbital formulas
         celestialBodies.forEach((body, name) => {
             if (body.orbitGroup && body.orbitSpeed) {
-                const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
-                const period = body.data.orbitalPeriod || 365.25;
-                const angle = (elapsedDays / period) * Math.PI * 2;
-                const localPos = orbitOffset(angle, body.orbitRadius, new THREE.Vector3());
-                if (body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
-                body.mesh.position.copy(localPos);
+                orbitOffset(calculateAlignedOrbitAngle(body.data), body.orbitRadius, body.mesh.position);
             }
             if (body.parent && body.orbitSpeed) {
-                const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
-                const period = body.data.orbitalPeriod || 27.3;
-                const angle = (elapsedDays / period) * Math.PI * 2;
-                const localPos = orbitOffset(angle, body.orbitRadius, new THREE.Vector3());
-                if (body.parent) { localPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), -body.parent.rotation.y); }
-                body.mesh.position.copy(localPos);
+                placeMoon(body, calculateAlignedOrbitAngle(body.data), body.orbitRadius);
             }
         });
     }
