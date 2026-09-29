@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=20">
+    <link rel="stylesheet" href="css/styles.css?v=21">
     <script type="importmap">
     {
         "imports": {
@@ -88,10 +88,25 @@
                 <span class="sheet-title">Settings</span>
                 <button id="settings-close" class="sheet-close" aria-label="Close">×</button>
             </div>
-            <button id="scale-toggle" class="toggle-btn">
-                <span class="toggle-label">Scale:</span>
-                <span id="scale-mode">Compressed</span>
-            </button>
+            <!-- Scale menu: continuous distance scale with presets -->
+            <div class="popup-menu" id="scale-menu">
+                <button id="scale-toggle" class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
+                    <span class="toggle-label">Scale:</span>
+                    <span id="scale-mode">Compressed</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel scale-panel" role="menu">
+                    <div class="popup-heading popup-heading-first">Distance scale</div>
+                    <input type="range" id="scale-slider" min="0" max="1000" value="565" aria-label="Distance scale">
+                    <div class="scale-slider-labels"><span>Max compressed</span><span>Realistic</span></div>
+                    <div class="scale-presets">
+                        <button class="tl-btn scale-preset" data-scale="max">Max</button>
+                        <button class="tl-btn scale-preset" data-scale="compressed">Compressed</button>
+                        <button class="tl-btn scale-preset" data-scale="realistic">Realistic</button>
+                    </div>
+                    <div class="popup-hint popup-note">Planets, moons and stars close in until they'd touch; sizes stay the same.</div>
+                </div>
+            </div>
             <button id="compass-btn" class="toggle-btn" title="North up (Ctrl + drag to rotate the view)" aria-label="North up">
                 <svg id="compass-needle" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
                     <polygon points="12,2 16,12 12,10.5 8,12" fill="#ff5a5a"/>
@@ -262,6 +277,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=88"></script>
+    <script type="module" src="js/main.js?v=91"></script>
 </body>
 </html>

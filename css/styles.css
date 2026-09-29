@@ -2143,3 +2143,16 @@ body {
 .popup-row.disabled:hover { background: none; }
 .popup-note { display: block; padding: 2px 4px 4px; white-space: normal; max-width: 240px; }
 .popup-note[hidden] { display: none; }
+
+/* Scale menu */
+.popup-heading-first { margin-top: 0; padding-top: 0; border-top: 0; }
+.scale-panel { min-width: 280px; }
+#scale-slider { width: 100%; margin: 8px 0 2px; accent-color: #4a9eff; }
+.scale-slider-labels { display: flex; justify-content: space-between; font-size: 0.72rem; color: #88aaff; }
+.scale-presets { display: flex; gap: 6px; margin: 10px 0 6px; }
+.scale-presets .tl-btn { flex: 1; font-size: 0.78rem; padding: 4px 6px; }
+.scale-preset.active {
+    background: rgba(255, 170, 136, 0.25);
+    border-color: rgba(255, 170, 136, 0.8);
+    color: #fff;
+}

@@ -1,13 +1,13 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=87';
+import { stellarTime, enhanceStarSurface, createCorona, addBlackHoleEffects } from './stellarEffects.js?v=91';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=87';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=87';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=87';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=91';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=91';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=91';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY } from './celestialData.js?v=87';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=87';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=91';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=91';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -413,10 +413,26 @@ const STAR_SCALES = {
     realistic: { label: 'Realistic', unitsPerLy: 10000 }
 };
 let starScaleMode = 'near';
-// The star-scale choice is for decluttering compressed views; with realistic
-// planet scale the stars are always at realistic distances.
-const effectiveStarScale = () => (scaleMode === 'realistic' ? 'realistic' : starScaleMode);
-const starUnitsPerLy = () => STAR_SCALES[effectiveStarScale()].unitsPerLy;
+
+// ── Continuous distance scale (Scale menu slider) ───────────────────────
+// scaleValue: 0 = maximum compression, 1 = realistic. Distances shrink
+// geometrically toward 0, but every orbit has a floor worked out from the
+// on-screen sizes, so nothing can clip: each moon clears its planet (and
+// rings) and the moons inside it; each planet clears the Sun or the previous
+// planet's whole system; each star clears the Solar System and every other
+// star. Body sizes never change. ("Compressed" is the old default look.)
+const SCALE_PRESETS = { max: 0, compressed: 0.565, realistic: 1 };
+const PLANET_UNITS_PER_AU = [5, 1000];      // at scaleValue 0 → 1 (compressed preset ≈ 100)
+const MOON_SCALE = [0.004, 1];              // × true distance (km / 5000) at 0 → 1
+const STAR_UNITS_PER_LY_REALISTIC = 10000;
+// chosen so the compressed preset keeps the old 500 units per light year
+const STAR_UNITS_PER_LY_MIN = Math.pow(500 / Math.pow(STAR_UNITS_PER_LY_REALISTIC, SCALE_PRESETS.compressed), 1 / (1 - SCALE_PRESETS.compressed));
+let scaleValue = SCALE_PRESETS.compressed;
+let currentUnitsPerAU = 100;     // live values for readouts / scale bar
+let currentStarUnitsPerLy = 500;
+// With realistic distances the stars are always realistic; the Stars menu's
+// near/far choice is for decluttering compressed views.
+const effectiveStarScale = () => (scaleValue >= 0.999 ? 'realistic' : starScaleMode);
 // Keep interactive stars distinguishable from the 1-3.5px background field.
 // This is the full diameter of the existing glow/spike sprite, not the star core.
 const COARSE_POINTER_MQ = window.matchMedia('(pointer: coarse)');
@@ -1156,6 +1172,7 @@ function init() {
     initISS();
     setSatelliteMode(SATELLITE_MODES[0]);
     createNearbyStars();
+    setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
     setupStellarReferenceMeshes();
     createStarField();
 
@@ -1182,7 +1199,6 @@ function init() {
     
     // UI
     document.getElementById('close-info').addEventListener('click', hideBodyInfo);
-    document.getElementById('scale-toggle').addEventListener('click', toggleScale);
     document.getElementById('camera-lock-toggle').addEventListener('click', toggleCameraLock);
     document.getElementById('orbital-toggle').addEventListener('click', toggleOrbitalMode);
     document.getElementById('home-indicator-toggle').addEventListener('click', toggleHomeIndicator);
@@ -1222,6 +1238,7 @@ function init() {
         setSatelliteMode(next);
     });
     setupPopupMenus();
+    setupScaleMenu();
     setupBodyInfoPeek();
     
 
@@ -1670,7 +1687,7 @@ function scaleDistance(distance, isMoon = false, isStellar = false) {
         }
     }
     
-    const AU = 149597870.7;
+    // (AU imported from celestialData.js)
     
     if (isStellar) {
         // Stellar distances (light years)
@@ -2019,7 +2036,7 @@ function createNearbyStars() {
         systemContainer.add(mesh);
         
         // Position the entire system at stellar scale (much further out)
-        const scaleFactor = starUnitsPerLy();
+        const scaleFactor = currentStarUnitsPerLy;
         systemContainer.position.set(
             position.x * scaleFactor,
             position.y * scaleFactor,
@@ -2167,7 +2184,7 @@ function createOrbitLine(radius, color, planetName) {
     scene.add(hitTarget);
     
     // Store reference to orbit visual and hit target
-    orbitLines.set(planetName, { visible: orbit, hitTarget: hitTarget });
+    orbitLines.set(planetName, { visible: orbit, hitTarget: hitTarget, baseRadius: radius });
 }
 
 // Real night sky from the HYG star database (astronexus HYG v41,
@@ -3143,7 +3160,6 @@ function animate() {
     // Update spacetime fabric with gravity wells block REMOVED
 
     applyScaleTransition();
-    applyStarScaleTransition();
     updateConstellationIntro();
 
     // Animate orbits
@@ -3814,7 +3830,7 @@ function focusOnBody(name) {
         // the same pullback, turn, and direct-flight sequence as every jump.
         const solarTarget = new THREE.Vector3(0, 0, 0);
         controls.minDistance = 1;
-        const distance = scaleMode === 'realistic' ? 30000 : 3000;
+        const distance = currentUnitsPerAU * 30; // ~30 AU out
         const solarCameraPos = new THREE.Vector3(
             distance * 0.8,
             distance * 0.5,
@@ -3893,12 +3909,13 @@ function focusOnBody(name) {
             // the entire planetary system. Moons and close exoplanet companions
             // are the only children that participate in focus framing.
             if (!childIsMoon && !childIsExoplanet) return;
-            // At true scale moons orbit tens of radii out; framing them would
-            // shrink the planet to a dot, so frame the planet alone
-            if (childIsMoon && scaleMode === 'realistic' && !body.isDistant) return;
+            // Moons far out (near-true scale) would shrink the planet to a dot
+            // in the framing, so frame the planet alone
+            const moonOrbit = childBody?.orbitRadius ?? scaleDistance(child.distance, childIsMoon);
+            if (childIsMoon && !body.isDistant && moonOrbit > ownRadius * 12) return;
             const childDist = body.isDistant && childBody
                 ? childBody.mesh.position.length()
-                : scaleDistance(child.distance, childIsMoon);
+                : moonOrbit;
             maxChildDistance = Math.max(maxChildDistance, childDist);
         });
     }
@@ -3987,6 +4004,13 @@ function focusOnBody(name) {
         offset = viewDirection.multiplyScalar(distance);
         offset.y += distance * 0.25;
         offset.setLength(distance * 1.1);
+    } else if (name === 'Sun') {
+        // Match the aligned planets' sunward viewing angle so the row recedes
+        // toward the upper right instead of using the distant-star portrait.
+        offset = new THREE.Vector3(-1, 0, 0)
+            .applyAxisAngle(_animYAxis, Math.PI * 0.19);
+        offset.y = 0.3;
+        offset.normalize().multiplyScalar(distance);
     } else if (!body.isDistant && body.type !== 'star' && body.data.type !== 'star') {
         // Start from the direction pointing from the body back toward the Sun
         // (origin), then swing ~35° around and lift above the ecliptic so a
@@ -5008,43 +5032,17 @@ function updateUI() {
     // Scale bar is 100px wide
     const scaleBarWidthWorld = (width * 100) / window.innerWidth;
     
+    // Live scale (continuous Scale slider): AU and light-year sizes in units
     let label;
-    if (scaleMode === 'realistic') {
-         // Realistic: 1 LY = 10000 units, 1 AU = 1000 units
-        if (dist > 50000) { // Deep space
-             const ly = scaleBarWidthWorld / 10000;
-             label = formatScaleValue(ly) + " Light Years";
-        } else {
-             const au = scaleBarWidthWorld / 1000;
-             if (au < 0.1) {
-                 const km = au * 149597870;
-                 if (km > 1000000) {
-                     label = formatScaleValue(km / 1000000) + " Million km";
-                 } else {
-                     label = formatScaleValue(km) + " km";
-                 }
-             } else {
-                 label = formatScaleValue(au) + " AU";
-             }
-        }
+    if (dist > currentUnitsPerAU * 100) { // deep space (beyond ~100 AU); Solar System views stay in AU
+        label = formatScaleValue(scaleBarWidthWorld / currentStarUnitsPerLy) + " Light Years";
     } else {
-        // Compressed: 1 LY = 500 units, 1 AU = 100 units
-        // Threshold around 2000 units for transition handling
-        if (dist > 2000) {
-             const ly = scaleBarWidthWorld / 500;
-             label = formatScaleValue(ly) + " Light Years";
+        const au = scaleBarWidthWorld / currentUnitsPerAU;
+        if (au < 0.1) {
+            const km = au * 149597870;
+            label = km > 1000000 ? formatScaleValue(km / 1000000) + " Million km" : formatScaleValue(km) + " km";
         } else {
-             const au = scaleBarWidthWorld / 100;
-             if (au < 0.1) {
-                 const km = au * 149597870;
-                 if (km > 1000000) {
-                     label = formatScaleValue(km / 1000000) + " Million km";
-                 } else {
-                     label = formatScaleValue(km) + " km";
-                 }
-             } else {
-                 label = formatScaleValue(au) + " AU";
-             }
+            label = formatScaleValue(au) + " AU";
         }
     }
 
@@ -5410,113 +5408,203 @@ function showOrbitTooltip(planetName, x, y) {
     tooltip.classList.remove('hidden');
 }
 
-// Compressed ↔ realistic scale is animated instead of snapped, and the camera
-// is left alone: planets, moons and stars slide to their new distances over
-// SCALE_TRANSITION_MS (geometric interpolation, so a 10× change looks even),
-// orbit lines stretch with them. With follow on, the camera rides along with
-// the selected body at the same angle; with follow off it doesn't move at all.
-const SCALE_TRANSITION_MS = 1600;
-let scaleTransition = null;
+const _layoutVec = new THREE.Vector3();
+let starLayoutInfo = null; // cached per star: { body, posLy, distLy, ext }
+let starPairFloor = 0;
+let sunExtent = null; // measured once, like the stars
 
-function toggleScale() {
-    // Snapshot where everything is now (mid-transition included)
-    const planets = [], moons = [], stars = [];
-    solarSystem.children.forEach(planetData => {
-        const body = celestialBodies.get(planetData.name);
-        if (body) planets.push({ body, data: planetData, from: body.orbitRadius });
-        (planetData.children || []).forEach(moonData => {
-            const moon = celestialBodies.get(moonData.name);
-            if (moon) moons.push({ body: moon, data: moonData, from: moon.orbitRadius ?? scaleDistance(moonData.distance, true) });
-        });
+// Largest extent of a star system's solid parts (star, corona, accretion disk,
+// pulsar beams, exoplanets) — sprites/points/lines (glows, orbits) excluded
+function starSystemExtent(body) {
+    let ext = 0;
+    body.mesh.updateMatrixWorld(true);
+    const origin = body.mesh.getWorldPosition(new THREE.Vector3());
+    body.mesh.traverse(o => {
+        if (!o.isMesh || !o.geometry) return;
+        if (!o.geometry.boundingSphere) o.geometry.computeBoundingSphere();
+        const bs = o.geometry.boundingSphere;
+        const scale = o.getWorldScale(_layoutVec).x;
+        const c = o.localToWorld(bs.center.clone()).sub(origin).length();
+        ext = Math.max(ext, c + bs.radius * scale);
     });
-
-    scaleMode = scaleMode === 'compressed' ? 'realistic' : 'compressed';
-    document.getElementById('scale-mode').textContent = capitalize(scaleMode);
-
-    // Targets in the new scale
-    planets.forEach(p => {
-        p.to = scaleDistance(p.data.distance);
-        // Redraw the orbit line at its final size; it's scaled from the old
-        // size to 1 during the transition
-        const orbitObj = orbitLines.get(p.data.name);
-        if (orbitObj) {
-            scene.remove(orbitObj.visible);
-            scene.remove(orbitObj.hitTarget);
-            orbitObj.visible.geometry.dispose();
-            orbitObj.visible.material.dispose();
-            orbitObj.hitTarget.geometry.dispose();
-            orbitObj.hitTarget.material.dispose();
-        }
-        createOrbitLine(p.to, p.data.color, p.data.name);
-    });
-    moons.forEach(m => { m.to = scaleDistance(m.data.distance, true); });
-
-    scaleTransition = { start: performance.now(), planets, moons, stars };
-    applyScaleTransition(); // first frame now, so nothing jumps
-    animateStarsToCurrentScale(); // realistic planets → realistic star distances
-    syncStarsMenu();
-
-    // Follow off normally keeps turning the camera toward the selected body;
-    // here that would swing the view as bodies slide out. Release the lock
-    // (as panning does) so the view stays exactly as framed. Follow on keeps
-    // riding along with the body at the same angle.
-    if (!isCameraLocked) currentFocusedBody = null;
+    return ext || 10;
 }
 
-// Star scale (Stars menu): stars slide to their new distances like planets do
-let starScaleTransition = null;
-function setStarScale(mode) {
-    if (!STAR_SCALES[mode] || mode === starScaleMode) return;
-    starScaleMode = mode;
-    animateStarsToCurrentScale();
-    syncStarsMenu();
-}
-
-// Slide the named stars to the distances of the current effective star scale
-function animateStarsToCurrentScale() {
-    const stars = [];
+function getStarLayoutInfo() {
+    if (starLayoutInfo) return starLayoutInfo;
+    starLayoutInfo = [];
     nearbyStars.forEach(starData => {
         const body = celestialBodies.get(starData.name);
         if (!body || !body.isDistant) return;
         const p = calculateStarPosition(starData);
-        stars.push({ body, from: body.mesh.position.clone(), to: new THREE.Vector3(p.x, p.y, p.z).multiplyScalar(starUnitsPerLy()) });
+        const posLy = new THREE.Vector3(p.x, p.y, p.z);
+        starLayoutInfo.push({ body, posLy, distLy: posLy.length(), ext: starSystemExtent(body) });
     });
-    starScaleTransition = { start: performance.now(), stars };
+    // Pairwise floor: two stars' systems plus a gap must fit between them
+    for (let i = 0; i < starLayoutInfo.length; i++) {
+        for (let j = i + 1; j < starLayoutInfo.length; j++) {
+            const a2 = starLayoutInfo[i], b2 = starLayoutInfo[j];
+            const d = a2.posLy.distanceTo(b2.posLy);
+            if (d > 1e-6) starPairFloor = Math.max(starPairFloor, (a2.ext + b2.ext) * 1.2 / d);
+        }
+    }
+    return starLayoutInfo;
 }
 
-function applyStarScaleTransition() {
-    if (!starScaleTransition) return;
-    const t = Math.min(1, (performance.now() - starScaleTransition.start) / SCALE_TRANSITION_MS);
-    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    starScaleTransition.stars.forEach(st => {
-        const k = st.to.length() / Math.max(st.from.length(), 1e-9);
-        st.body.mesh.position.copy(st.from).multiplyScalar(Math.pow(k, e));
+// Target distances for a scale value (see the comment on SCALE_PRESETS)
+function computeScaleLayout(sv) {
+    const lerpLog = ([lo, hi], t) => lo * Math.pow(hi / lo, t);
+    const k = lerpLog(PLANET_UNITS_PER_AU, sv);
+    const km = lerpLog(MOON_SCALE, sv);
+    const layout = { k, planets: new Map(), moons: new Map(), starU: STAR_UNITS_PER_LY_REALISTIC };
+    // Clear the Sun's whole visible body (corona included), not just its core
+    const sun = celestialBodies.get('Sun');
+    sunExtent ??= sun ? starSystemExtent(sun) : 14;
+
+    let prevOrbit = 0, prevExt = sunExtent;
+    const planets = solarSystem.children
+        .filter(pd => celestialBodies.get(pd.name)?.orbitGroup)
+        .sort((x, y) => x.distance - y.distance);
+    for (const pd of planets) {
+        const planetR = celestialBodies.get(pd.name).mesh.userData.visualRadius || 1;
+        const outer = pd.hasRings ? planetR * 2.5 : planetR;
+        // Moons: nested orbits spaced by more than the two bodies' sizes
+        let prevMoon = outer, prevMoonR = 0, edge = outer;
+        const moons = (pd.children || []).filter(md => celestialBodies.get(md.name)).sort((x, y) => x.distance - y.distance);
+        for (const md of moons) {
+            const moonR = celestialBodies.get(md.name).mesh.userData.visualRadius || 0.3;
+            const floor = prevMoon + prevMoonR + moonR + Math.max(0.15, (prevMoonR + moonR) * 0.5);
+            const r = Math.max(km * md.distance / 5000, floor);
+            layout.moons.set(md.name, r);
+            prevMoon = r;
+            prevMoonR = moonR;
+            edge = r + moonR;
+        }
+        // Planet: clear the Sun / previous planet's system plus its own
+        const floor = prevOrbit + prevExt + edge + Math.max(1, (prevExt + edge) * 0.25);
+        const r = Math.max(k * pd.distance / AU, floor);
+        layout.planets.set(pd.name, r);
+        prevOrbit = r;
+        prevExt = edge;
+    }
+    const systemEdge = prevOrbit + prevExt;
+    // For readouts/scale bar/overview framing, measure "units per AU" from the
+    // outermost planet: when compressed, inner orbits sit on their spacing
+    // floors and the nominal factor would understate the system's size
+    const outermost = planets[planets.length - 1];
+    if (outermost) layout.k = Math.max(k, prevOrbit / (outermost.distance / AU));
+
+    if (sv < 0.999 && starScaleMode !== 'realistic') {
+        let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv) * (starScaleMode === 'far' ? 5 : 1);
+        u = Math.min(u, STAR_UNITS_PER_LY_REALISTIC);
+        const info = getStarLayoutInfo();
+        let floor = starPairFloor;
+        for (const st of info) {
+            if (st.distLy > 1e-6) floor = Math.max(floor, (systemEdge + st.ext) * 1.2 / st.distLy);
+        }
+        layout.starU = Math.max(u, floor);
+    }
+    return layout;
+}
+
+function captureCurrentLayout() {
+    const layout = { k: currentUnitsPerAU, planets: new Map(), moons: new Map(), starU: currentStarUnitsPerLy };
+    solarSystem.children.forEach(pd => {
+        const body = celestialBodies.get(pd.name);
+        if (body?.orbitGroup) layout.planets.set(pd.name, body.orbitRadius);
+        (pd.children || []).forEach(md => {
+            const moon = celestialBodies.get(md.name);
+            if (moon) layout.moons.set(md.name, moon.orbitRadius);
+        });
     });
-    if (t >= 1) starScaleTransition = null;
+    return layout;
+}
+
+function applyLayout(layout) {
+    layout.planets.forEach((r, name) => {
+        const body = celestialBodies.get(name);
+        body.orbitRadius = r;
+        // Aligned orbits animate from orbitRadius; realistic orbits rotate
+        // the orbit group with the planet sitting out along +X
+        if (orbitalMode === 'realistic') body.mesh.position.set(r, 0, 0);
+        const orbitObj = orbitLines.get(name);
+        if (orbitObj?.baseRadius) {
+            orbitObj.visible.scale.setScalar(r / orbitObj.baseRadius);
+            orbitObj.hitTarget.scale.setScalar(r / orbitObj.baseRadius);
+        }
+    });
+    layout.moons.forEach((r, name) => { celestialBodies.get(name).orbitRadius = r; });
+    getStarLayoutInfo().forEach(st => st.body.mesh.position.copy(st.posLy).multiplyScalar(layout.starU));
+    currentUnitsPerAU = layout.k;
+    currentStarUnitsPerLy = layout.starU;
+    realisticMoonPositionsDirty = true; // moons re-placed even while paused
+}
+
+// Change the scale; animate for presets (1.6 s, geometric so a 10× change
+// looks even), apply directly while the slider is dragged.
+const SCALE_TRANSITION_MS = 1600;
+let scaleTransition = null;
+
+function setScaleValue(sv, animate) {
+    scaleValue = THREE.MathUtils.clamp(sv, 0, 1);
+    scaleMode = scaleValue >= 0.999 ? 'realistic' : 'compressed';
+    const target = computeScaleLayout(scaleValue);
+    if (animate) {
+        scaleTransition = { start: performance.now(), from: captureCurrentLayout(), to: target };
+    } else {
+        scaleTransition = null;
+        applyLayout(target);
+    }
+    // Follow off normally keeps turning the camera toward the selected body;
+    // here that would swing the view as bodies move. Release the lock (as
+    // panning does); follow on rides along with the body at the same angle.
+    if (!isCameraLocked && currentFocusedBody) currentFocusedBody = null;
+    syncScaleMenu();
+    syncStarsMenu();
 }
 
 function applyScaleTransition() {
     if (!scaleTransition) return;
     const t = Math.min(1, (performance.now() - scaleTransition.start) / SCALE_TRANSITION_MS);
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in-out
-    const geo = (from, to) => from * Math.pow(to / from, e);
-
-    scaleTransition.planets.forEach(p => {
-        const r = geo(p.from, p.to);
-        p.body.orbitRadius = r;
-        // Aligned orbits animate from orbitRadius each frame; realistic orbits
-        // rotate the orbit group, with the planet sitting out along +X
-        if (orbitalMode === 'realistic') p.body.mesh.position.set(r, 0, 0);
-        const orbitObj = orbitLines.get(p.data.name);
-        if (orbitObj) {
-            orbitObj.visible.scale.setScalar(r / p.to);
-            orbitObj.hitTarget.scale.setScalar(r / p.to);
-        }
-    });
-    scaleTransition.moons.forEach(m => { m.body.orbitRadius = geo(m.from, m.to); });
-    realisticMoonPositionsDirty = true; // moons re-placed even while paused
-
+    const { from, to } = scaleTransition;
+    const geo = (a2, b2) => a2 * Math.pow(b2 / a2, e);
+    const mid = { k: geo(from.k, to.k), planets: new Map(), moons: new Map(), starU: geo(from.starU, to.starU) };
+    to.planets.forEach((r, n) => mid.planets.set(n, geo(from.planets.get(n) ?? r, r)));
+    to.moons.forEach((r, n) => mid.moons.set(n, geo(from.moons.get(n) ?? r, r)));
+    applyLayout(mid);
     if (t >= 1) scaleTransition = null;
+}
+
+// Stars menu near/far/realistic choice: re-lay out the stars (animated)
+function setStarScale(mode) {
+    if (!STAR_SCALES[mode] || mode === starScaleMode) return;
+    starScaleMode = mode;
+    setScaleValue(scaleValue, true);
+}
+
+// ── Scale menu (bottom bar) ─────────────────────────────────────────────
+function syncScaleMenu() {
+    const slider = document.getElementById('scale-slider');
+    if (slider && document.activeElement !== slider) slider.value = Math.round(scaleValue * 1000);
+    const label = document.getElementById('scale-mode');
+    if (label) {
+        const near = (v) => Math.abs(scaleValue - v) < 0.004;
+        label.textContent = near(SCALE_PRESETS.realistic) ? 'Realistic'
+            : near(SCALE_PRESETS.compressed) ? 'Compressed'
+            : near(SCALE_PRESETS.max) ? 'Max compressed'
+            : `Custom (${Math.round(scaleValue * 100)}%)`;
+    }
+    document.querySelectorAll('.scale-preset').forEach(b =>
+        b.classList.toggle('active', Math.abs(scaleValue - SCALE_PRESETS[b.dataset.scale]) < 0.004));
+}
+
+function setupScaleMenu() {
+    const slider = document.getElementById('scale-slider');
+    slider?.addEventListener('input', () => setScaleValue(slider.value / 1000, false));
+    document.querySelectorAll('.scale-preset').forEach(b =>
+        b.addEventListener('click', () => setScaleValue(SCALE_PRESETS[b.dataset.scale], true)));
+    syncScaleMenu();
 }
 
 function toggleCameraLock() {
@@ -6378,7 +6466,7 @@ function updateHomeIndicator() {
 
     // Calculate distance
     let distanceKm = 0;
-    const AU = 149597870.7; // km
+    // (AU imported from celestialData.js)
     
     if (viewMode === 'sizeCompare') {
         // In size compare mode, 1 unit = 2000 km
@@ -6399,7 +6487,7 @@ function updateHomeIndicator() {
                 distanceKm = distRatio * 6371;
             } else {
                 // Far from Earth: use orbital scale
-                const unitToKm = scaleMode === 'realistic' ? (AU / 1000) : (AU / 100);
+                const unitToKm = AU / currentUnitsPerAU;
                 distanceKm = rawDist * unitToKm;
             }
         } else {
@@ -6411,10 +6499,11 @@ function updateHomeIndicator() {
                     // Solar system bodies: use precise dynamic geocentric distance helper
                     distanceKm = getCurrentDistanceToEarth(focusedBody.data);
                 }
-            } else {
-                const rawDist = camera.position.distanceTo(homePosition);
-                const unitToKm = scaleMode === 'realistic' ? (AU / 1000) : (AU / 100);
-                distanceKm = rawDist * unitToKm;
+            }
+            // Nothing selected, or no distance of its own (e.g. the "Solar
+            // System" marker): measure from the camera instead of showing NaN
+            if (!focusedBody || !Number.isFinite(distanceKm)) {
+                distanceKm = camera.position.distanceTo(homePosition) * (AU / currentUnitsPerAU);
             }
         }
     }
