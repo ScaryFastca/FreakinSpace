@@ -219,7 +219,17 @@ function tileBounds(z, x, y) {
 
 function buildTileMesh(z, x, y, R) {
     const N = z < 6 ? 32 : z < 9 ? 16 : 8; // coarse tiles span up to 22°; keep chord sag (and lift) small
-    const spanRad = THREE.MathUtils.degToRad(360 / 2 ** z) / N;
+    // Web Mercator stops at ±85.05°, leaving a hole at each pole where the
+    // plain base globe showed as a grey disc. The top and bottom tile rows are
+    // stretched to the pole, spread evenly over all their rows (stretching
+    // just the last row made one long flat strip that sagged below the globe,
+    // which showed through as a disc inside a grey ring).
+    const top = tileLat(y, z), bottom = tileLat(y + 1, z);
+    const polarTop = y === 0, polarBottom = y === 2 ** z - 1;
+    const latTop = polarTop ? 90 : top, latBottom = polarBottom ? -90 : bottom;
+    const latAt = v => (polarTop || polarBottom) ? latTop + (latBottom - latTop) * v : tileLat(y + v, z);
+    const latSpanRad = THREE.MathUtils.degToRad(Math.abs(latTop - latBottom)) / N;
+    const spanRad = Math.max(THREE.MathUtils.degToRad(360 / 2 ** z) / N, latSpanRad);
     // Lift above the base sphere: cover this patch's own chord sag, plus the
     // base sphere is an inscribed polyhedron so it never pokes above R.
     const r = R * (1 + (1 - Math.cos(spanRad / 2)) * 1.5) + R * 2e-8;
@@ -232,7 +242,7 @@ function buildTileMesh(z, x, y, R) {
     let p = 0, q = 0;
     for (let j = 0; j <= N; j++) {
         const v = j / N;
-        const lat = tileLat(y + v, z);
+        const lat = latAt(v);
         for (let i = 0; i <= N; i++) {
             const u = i / N;
             const lon = tileLon(x + u, z);
