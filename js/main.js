@@ -1,14 +1,15 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=114';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=118';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=114';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=114';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=114';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=114';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=118';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=118';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=118';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=118';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=118';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=114';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=114';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=118';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=118';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -413,6 +414,15 @@ function bodyLocalQuaternion(name, out) {
     const frame = poleFrame(name);
     if (!body || !frame) return out.setFromAxisAngle(_yAxis, bodySpinAngle(name));
     out.copy(frame).multiply(_orientSpinQ.setFromAxisAngle(_yAxis, bodySpinAngle(name)));
+    // Aligned mode puts planets at schematic spots on their orbits, not their
+    // real ones. Turn the whole orientation by the difference so the geometry
+    // relative to the Sun (seasons, time of day) still matches the date;
+    // otherwise the seasons depended on the day the page was opened.
+    if (orbitalMode !== 'realistic' && body.orbitGroup && PLANET_KEPLER[name]) {
+        const d = (simDate - J2000) / MS_PER_DAY;
+        const shift = calculateAlignedOrbitAngle(body.data) - calculatePlanetAngle(body.data, d);
+        out.premultiply(_orientParentQ.setFromAxisAngle(_yAxis, shift));
+    }
     if (body.mesh.parent) out.premultiply(body.mesh.parent.getWorldQuaternion(_orientParentQ).invert());
     return out;
 }
@@ -1430,6 +1440,18 @@ function init() {
         if (label) label.textContent = style === 'map' ? 'Street map' : 'City lights';
     };
     applyNightView(localStorage.getItem(NIGHT_VIEW_KEY) === 'lights' ? 'lights' : 'map');
+    // Globe mode: Earth as a desktop globe (grid, glowing equator, tilted stand)
+    const applyGlobeMode = on => {
+        setGlobeMode(on, celestialBodies.get('Earth')?.mesh, scene);
+        const label = document.getElementById('globe-mode');
+        if (label) label.textContent = on ? 'On' : 'Off';
+    };
+    document.getElementById('globe-toggle')?.addEventListener('click', () => applyGlobeMode(!isGlobeMode()));
+    window.addEventListener('keydown', (e) => {
+        if (e.code !== 'KeyG' || e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        applyGlobeMode(!isGlobeMode());
+    });
+
     document.getElementById('night-view-toggle')?.addEventListener('click', () => {
         const next = document.getElementById('night-view-mode').textContent === 'Street map' ? 'lights' : 'map';
         applyNightView(next);
@@ -3507,6 +3529,7 @@ function animate() {
 
     // International Space Station, placed from its real orbit at simDate
     updateISS(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
+    updateGlobeMode(celestialBodies.get('Earth')?.mesh, camera, viewMode === 'map');
     updateSatellites(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
 
     // Headlight for size comparison: light objects from the camera's viewpoint

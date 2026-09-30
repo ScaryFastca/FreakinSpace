@@ -96,6 +96,7 @@ no framework, no account.
 | Spread out / compress distances | W / S, or the Scale slider | Scale slider |
 | Hide / show orbit lines | Q | – |
 | Fly to Earth / the ISS | E / I | – |
+| Desktop globe mode | G, or the Globe button | Globe button |
 | Hide / show the interface | H | – |
 
 On phones, a bottom bar opens the object list, time controls and settings.

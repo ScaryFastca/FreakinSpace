@@ -71,6 +71,9 @@
                 <span class="key">E</span> / <span class="key">I</span> fly to Earth / the ISS
             </div>
             <div class="control-hint">
+                <span class="key">G</span> desktop globe mode
+            </div>
+            <div class="control-hint">
                 <span class="key">H</span> hide / show the interface
             </div>
         </div>
@@ -176,6 +179,10 @@
             <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
                 <span class="toggle-label">Satellites:</span>
                 <span id="satellites-mode">On</span>
+            </button>
+            <button id="globe-toggle" class="toggle-btn" title="Show Earth as a desktop globe: grid, equator and a tilted stand (G)">
+                <span class="toggle-label">Globe:</span>
+                <span id="globe-mode">Off</span>
             </button>
             <button id="night-view-toggle" class="toggle-btn" title="What Earth's night side shows when you zoom in close">
                 <span class="toggle-label">Night view:</span>
@@ -310,6 +317,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=114"></script>
+    <script type="module" src="js/main.js?v=118"></script>
 </body>
 </html>
