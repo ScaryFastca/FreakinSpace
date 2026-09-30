@@ -218,36 +218,4 @@ export function createStellarLimb(radius, color) {
     return limb;
 }
 
-export function addBlackHoleEffects(parent, radius, color, outerRadius = 5) {
-    const material = shade(new THREE.MeshBasicMaterial({
-        color, transparent: true, side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending, depthWrite: false
-    }), '', `
-        float r = length(stellarPosition.xy) / ${radius.toFixed(8)};
-        float radial = clamp((r - 1.25) / ${(outerRadius - 1.25).toFixed(8)}, 0.0, 1.0);
-        float angle = atan(stellarPosition.y, stellarPosition.x);
-        float bands = 0.72 + 0.28 * sin(r * 35.0 + sin(angle * 3.0 - stellarTime * 0.35));
-        float spiral = 0.75 + 0.25 * sin(angle * 5.0 - r * 9.0 + stellarTime * 0.6);
-        float hot = pow(1.0 - radial, 3.0);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(1.0, 0.92, 0.72), hot);
-        diffuseColor.rgb *= 0.8 + 0.5 * (0.5 + 0.5 * cos(angle));
-        diffuseColor.a = smoothstep(0.0, 0.06, radial) * (1.0 - smoothstep(0.55, 1.0, radial)) * bands * spiral;
-    `);
-    const disk = new THREE.Mesh(new THREE.RingGeometry(radius * 1.25, radius * outerRadius, 128), material);
-    disk.rotation.x = Math.PI * 0.32;
-    disk.name = 'accretionDisk';
-    disk.raycast = () => {};
-    parent.add(disk);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius * 1.06, radius * 0.025, 8, 96),
-        new THREE.MeshBasicMaterial({ color: 0xffe5bc, toneMapped: false }));
-    ring.name = 'photonRing';
-    ring.raycast = () => {};
-    // Stylized lensing outline always faces the observer; the disk stays tilted.
-    const worldRotation = new THREE.Quaternion();
-    ring.onBeforeRender = (_renderer, _scene, camera) => {
-        parent.getWorldQuaternion(worldRotation);
-        ring.quaternion.copy(worldRotation.invert()).multiply(camera.quaternion);
-        ring.updateMatrixWorld(true);
-    };
-    parent.add(ring);
-}
+// Black holes are drawn by js/blackHole.js (ray-traced disk and shadow)

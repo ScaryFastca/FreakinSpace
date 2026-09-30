@@ -77,7 +77,9 @@ no framework, no account.
 
 ### Go beyond
 - A real night sky of about 9,000 naked-eye stars, with constellation lines and labels
-- Nearby stars, exoplanet systems and black holes
+- Nearby stars, exoplanet systems and black holes. Black holes are ray-traced
+  in the browser: light bends around them, so the far side of the accretion
+  disk arcs over and under the black shadow, like in *Interstellar*
 - A **size comparison** mode that lines everything up from the Moon to
   Stephenson 2-18, one of the largest stars known
 

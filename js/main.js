@@ -1,16 +1,17 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=127';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=141';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=141';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=127';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=127';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=127';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=127';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=127';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=127';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=141';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=141';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=141';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=141';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=141';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=141';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=127';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=127';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=141';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=141';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -647,8 +648,14 @@ let currentStarUnitsPerLy = 500;
 let currentSystemEdge = 0;
 let pullFarStars = false; // Stars menu: log-compress distant objects' distances (not to scale)
 // ...only with compressed scales: Realistic always shows true distances
-const starsPulledInAt = sv => pullFarStars && sv < 0.999;
-let starsPulledInNow = false; // state last laid out (to animate when it flips)
+// How pulled in the far objects are at a slider position: fully from Max
+// through Compressed, then blending continuously to true distances at
+// Realistic. Tied to the slider (not a timed glide), so dragging it or
+// holding W/S moves the far objects smoothly in step with everything else.
+const PULL_FADE = [0.6, 1.0];
+const starPullAt = sv => pullFarStars ? 1 - THREE.MathUtils.smoothstep(sv, PULL_FADE[0], PULL_FADE[1]) : 0;
+let starsPulledInNow = false; // pull-in weight last laid out > 0 (labels, menu)
+let currentStarBlend = 0, currentStarUPulled = 0;
 // With realistic distances the stars are always realistic; the Stars menu's
 // near/far choice is for decluttering compressed views.
 const effectiveStarScale = () => (scaleValue >= 0.999 ? 'realistic' : starScaleMode);
@@ -1406,7 +1413,7 @@ function init() {
     createStarField();
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; } };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; } };
 
     // Spacetime grid removed
 
@@ -2008,11 +2015,15 @@ function scaleExoplanetDistance(distance, hostMesh, planetMesh) {
 
 function createDistantObjectMesh(data) {
     let visualRadius;
-    if (data.displayRadius) {
+    // Black holes ignore their hand-set displayRadius and use the true
+    // Schwarzschild radius (below), consistent with stars and size comparison
+    if (data.displayRadius && data.type !== 'blackhole') {
         visualRadius = data.displayRadius;
     } else if (data.radius) {
-        // Cap giant stars so they don't overlap everything
-        if (data.radius > 100000000) { // > ~140 solar radii
+        // Cap giant stars so they don't overlap everything. Black holes use
+        // their true Schwarzschild radius like stars do (the log cap shrank
+        // Phoenix A*, ~200× Stephenson 2-18, to smaller than a giant star)
+        if (data.radius > 100000000 && data.type !== 'blackhole') { // > ~140 solar radii
             visualRadius = 40 + Math.log10(data.radius / 100000000) * 5; // Logarithmic growth
         } else {
             visualRadius = Math.max(data.radius / 50000, 5);
@@ -2025,13 +2036,14 @@ function createDistantObjectMesh(data) {
     const group = new THREE.Group();
     
     if (data.type === 'blackhole') {
-        const blackHole = new THREE.Mesh(
-            new THREE.SphereGeometry(visualRadius, 48, 32),
-            new THREE.MeshBasicMaterial({ color: 0x000000 })
-        );
-        blackHole.userData.name = data.name;
-        group.add(blackHole);
-        addBlackHoleEffects(group, visualRadius, data.accretionColor || 0xFF4400);
+        // Disk shown nearly edge-on to the Solar System (the object sits out
+        // along its sky direction, so the Sun is back along −direction)
+        const sp = calculateStarPosition(data);
+        const towardSun = new THREE.Vector3(-sp.x, -sp.y, -sp.z).normalize();
+        const visual = createBlackHoleVisual(visualRadius, data.accretionColor || 0xFF7A30, data.name.length, stellarTime, towardSun);
+        visual.getObjectByName('blackHolePick').userData.name = data.name;
+        group.add(visual);
+        group.userData.visualRadius = visualRadius;
 
     } else if (data.type === 'neutronstar') {
         // Neutron star - small, bright, with pulse effect
@@ -2532,6 +2544,9 @@ function buildStarFieldFromData(stars) {
             transparent: true,
             opacity: 0.9,
             sizeAttenuation: false,
+            // A backdrop: the sky sphere is nearer than the farthest objects
+            // (giant black holes), so writing depth would hide them behind it
+            depthWrite: false,
         });
         const points = new THREE.Points(geometry, material);
         points.renderOrder = -1;
@@ -3360,7 +3375,8 @@ function createRandomStarField() {
         vertexColors: true,
         transparent: true,
         opacity: 0.8,
-        sizeAttenuation: false
+        sizeAttenuation: false,
+        depthWrite: false // backdrop: never hide real objects beyond its radius
     });
 
     starField = new THREE.Points(geometry, material);
@@ -3665,6 +3681,25 @@ function animate() {
                     + h10 * tangentScale * flyToAnimation.startTargetVelocity.z
                     + h01 * flyToAnimation.endTarget.z
             );
+        } else if (flyToAnimation.orbitApproach) {
+            const A = flyToAnimation;
+            const obj = A.endTarget;
+            // Turn to face the object first (target glides onto it)
+            const lookT = THREE.MathUtils.smootherstep(progress, 0, 0.28);
+            // Distance: geometric (log) interpolation, eased at both ends
+            const rEnd = Math.max(A.offset.length(), 1e-6);
+            const distT = THREE.MathUtils.smootherstep(progress, 0, 1);
+            const r = Math.exp(THREE.MathUtils.lerp(Math.log(A.rStart), Math.log(rEnd), distT));
+            // Swing around to the home-in-view side in the second part
+            const orbitT = THREE.MathUtils.smootherstep(progress, 0.3, 1);
+            const az = A.az0 + A.dAz * orbitT;
+            const el = THREE.MathUtils.lerp(A.el0, A.el1, orbitT);
+            camera.position.set(
+                obj.x + r * Math.cos(el) * Math.sin(az),
+                obj.y + r * Math.sin(el),
+                obj.z + r * Math.cos(el) * Math.cos(az)
+            );
+            controls.target.lerpVectors(A.startTarget, obj, lookT);
         } else if (flyToAnimation.travelTurn
             && progress < flyToAnimation.travelTurn.fraction) {
             // Pull away from the current view while rotating toward the new
@@ -4319,31 +4354,12 @@ function focusOnBody(name) {
         offset.y += distance * 0.3;
         offset.setLength(distance * 1.3);
     } else {
-        // Stars and distant objects get an object-scale portrait. Trying to keep
-        // Earth in-frame across interstellar distances makes every target a dot;
-        // the home indicator already communicates the direction back instead.
-        const awayFromHome = worldPosition.clone();
-        if (awayFromHome.lengthSq() < 0.001) {
-            awayFromHome.set(0.35, 0.15, 1);
-        }
-        awayFromHome.normalize();
-
-        const perpendicular = new THREE.Vector3(
-            -awayFromHome.z,
-            0,
-            awayFromHome.x
-        );
-        if (perpendicular.lengthSq() < 0.001) perpendicular.set(1, 0, 0);
-        perpendicular.normalize();
-
-        // Finish on the home-facing side so the direct approach cannot pass
-        // through the destination object on the way to its portrait position.
-        offset = new THREE.Vector3()
-            .addScaledVector(awayFromHome, -0.8)
-            .addScaledVector(perpendicular, 0.45)
-            .addScaledVector(_animYAxis, 0.3)
-            .normalize()
-            .multiplyScalar(distance);
+        // Stars and distant objects: finish just beyond the object, looking
+        // back past it toward home, turned ~20° to the side and a little above.
+        // Home (and its "You" label / home arrow) then sits in frame beside
+        // the object, a few tens of degrees off centre, so you always see
+        // where you came from.
+        offset = homeInViewOffset(worldPosition, distance);
     }
 
     const targetCameraPosition = (targetLookAtPosition ? targetLookAtPosition.clone() : worldPosition.clone()).add(offset);
@@ -4389,7 +4405,9 @@ function focusOnBody(name) {
     const isHomewardInterstellarFlight = !body.isDistant
         && travelDistance > 50000;
 
-    flyToAnimation = isInterstellarFlight || isHomewardInterstellarFlight
+    flyToAnimation = body.isDistant && name !== 'ISS'
+        ? createOrbitApproach(worldPosition, offset, travelDistance)
+        : isInterstellarFlight || isHomewardInterstellarFlight
         ? createInterstellarFlight(
             targetCameraPosition,
             worldPosition,
@@ -5833,11 +5851,14 @@ function getStarLayoutInfo() {
 // system kept moving. Gaps between neighbours are log-concave along this path,
 // so they're never smaller than at the two (clip-free) ends.
 function computeScaleLayout(sv) {
-    const pulled = starsPulledInAt(sv);
-    const a = computeRawScaleLayout(0, pulled), b = computeRawScaleLayout(1, pulled);
+    const a = computeRawScaleLayout(0, false), b = computeRawScaleLayout(1, false);
     const geo = (x, y) => x * Math.pow(y / x, sv);
     const layout = { k: geo(a.k, b.k), planets: new Map(), moons: new Map(), starU: geo(a.starU, b.starU),
-        systemEdge: geo(a.systemEdge, b.systemEdge), pulled };
+        systemEdge: geo(a.systemEdge, b.systemEdge), starBlend: starPullAt(sv), starUPulled: 0 };
+    if (layout.starBlend > 0) {
+        const pa = computeRawScaleLayout(0, true), pb = computeRawScaleLayout(1, true);
+        layout.starUPulled = geo(pa.starU, pb.starU);
+    }
     b.planets.forEach((r, n) => layout.planets.set(n, geo(a.planets.get(n) ?? r, r)));
     b.moons.forEach((r, n) => layout.moons.set(n, geo(a.moons.get(n) ?? r, r)));
     return layout;
@@ -5845,7 +5866,7 @@ function computeScaleLayout(sv) {
 
 // Layout from "true distance × scale" with no-clip floors; used for the two
 // ends of the slider (see SCALE_PRESETS)
-function computeRawScaleLayout(sv, pulled = starsPulledInAt(sv)) {
+function computeRawScaleLayout(sv, pulled = false) {
     const lerpLog = ([lo, hi], t) => lo * Math.pow(hi / lo, t);
     const k = lerpLog(PLANET_UNITS_PER_AU, sv);
     const km = lerpLog(MOON_SCALE, sv);
@@ -5894,11 +5915,17 @@ function computeRawScaleLayout(sv, pulled = starsPulledInAt(sv)) {
         // only enough for every star system to clear the Solar System; tight
         // pairs are then nudged apart locally (layoutPulledInStars) so one
         // close pair doesn't push the whole field back out.
-        let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv);
-        for (const st of getStarLayoutInfo()) {
-            if (st.logLy > 1e-6) u = Math.max(u, (systemEdge + st.ext) * 1.2 / st.logLy);
-        }
-        layout.starU = u;
+        // The field's scale comes from the 90th percentile of what each object
+        // needs to clear the Solar System, not the maximum: a black hole
+        // hundreds of times bigger than any star (Phoenix A*) would otherwise
+        // push every star far away. Those few outliers are pushed outward
+        // individually in layoutPulledInStars, like close pairs.
+        const needs = getStarLayoutInfo()
+            .filter(st => st.logLy > 1e-6)
+            .map(st => (systemEdge + st.ext) * 1.2 / st.logLy)
+            .sort((x, y) => x - y);
+        const p90 = needs.length ? needs[Math.floor((needs.length - 1) * 0.9)] : 0;
+        layout.starU = Math.max(lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv), p90);
     } else if (sv < 0.999 && starScaleMode !== 'realistic') {
         let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv) * (starScaleMode === 'far' ? 5 : 1);
         u = Math.min(u, STAR_UNITS_PER_LY_REALISTIC);
@@ -5914,7 +5941,7 @@ function computeRawScaleLayout(sv, pulled = starsPulledInAt(sv)) {
 
 function captureCurrentLayout() {
     const layout = { k: currentUnitsPerAU, planets: new Map(), moons: new Map(), starU: currentStarUnitsPerLy,
-        systemEdge: currentSystemEdge };
+        systemEdge: currentSystemEdge, starBlend: currentStarBlend, starUPulled: currentStarUPulled };
     solarSystem.children.forEach(pd => {
         const body = celestialBodies.get(pd.name);
         if (body?.orbitGroup) layout.planets.set(pd.name, body.orbitRadius);
@@ -5943,10 +5970,20 @@ function applyLayout(layout) {
         layout.planets.forEach((r, name) => placeRealisticPlanet(celestialBodies.get(name), d));
     }
     layout.moons.forEach((r, name) => { celestialBodies.get(name).orbitRadius = r; });
-    const starTargets = layout.pulled
-        ? layoutPulledInStars(layout.starU, layout.systemEdge)
-        : getStarLayoutInfo().map(st => st.posLy.clone().multiplyScalar(layout.starU));
-    getStarLayoutInfo().forEach((st, i) => placeStar(st, starTargets[i]));
+    // Stars: true-distance layout, pulled-in layout, or a blend between them
+    // (distance geometric, direction interpolated) set by the slider position
+    const blend = layout.starBlend || 0;
+    const pulledTargets = blend > 0 ? layoutPulledInStars(layout.starUPulled, layout.systemEdge) : null;
+    getStarLayoutInfo().forEach((st, i) => {
+        const pos = st.body.mesh.position;
+        _starLinear.copy(st.posLy).multiplyScalar(layout.starU);
+        if (!pulledTargets) pos.copy(_starLinear);
+        else if (blend >= 1) pos.copy(pulledTargets[i]);
+        else blendRadial(_starLinear, pulledTargets[i], blend, pos);
+    });
+    starsPulledInNow = blend > 0.01;
+    currentStarBlend = blend;
+    currentStarUPulled = layout.starUPulled || 0;
     currentUnitsPerAU = layout.k;
     currentStarUnitsPerLy = layout.starU;
     currentSystemEdge = layout.systemEdge;
@@ -5992,27 +6029,14 @@ function layoutPulledInStars(starU, systemEdge) {
     return P;
 }
 
-// Star placement, blending from the previous layout while the pull-in toggle
-// animates (radius geometric, direction slerped, like the scale glide)
-let starMorph = null; // { from: Vector3[], start }
-const _morphA = new THREE.Vector3(), _morphB = new THREE.Vector3();
-function placeStar(st, target) {
-    if (!starMorph) { st.body.mesh.position.copy(target); return; }
-    const t = Math.min(1, (performance.now() - starMorph.start) / SCALE_TRANSITION_MS);
-    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-    const from = starMorph.from.get(st.body.data.name) || target;
-    const r0 = Math.max(from.length(), 1e-6), r1 = Math.max(target.length(), 1e-6);
-    _morphA.copy(from).divideScalar(r0);
-    _morphB.copy(target).divideScalar(r1);
-    _morphA.lerp(_morphB, e).normalize();
-    st.body.mesh.position.copy(_morphA).multiplyScalar(r0 * Math.pow(r1 / r0, e));
-}
-
-let starMorphTimer = null;
-function startStarMorph() {
-    starMorph = { start: performance.now(), from: new Map(getStarLayoutInfo().map(st => [st.body.data.name, st.body.mesh.position.clone()])) };
-    clearTimeout(starMorphTimer);
-    starMorphTimer = setTimeout(() => { starMorph = null; setScaleValue(scaleValue, false); }, SCALE_TRANSITION_MS + 50);
+// Blend two positions seen from the Sun: distance geometric (so a star 10⁶×
+// further moves evenly on a log scale), direction interpolated
+const _starLinear = new THREE.Vector3(), _blendA = new THREE.Vector3(), _blendB = new THREE.Vector3();
+function blendRadial(a, b, t, out) {
+    const ra = Math.max(a.length(), 1e-6), rb = Math.max(b.length(), 1e-6);
+    _blendA.copy(a).divideScalar(ra);
+    _blendB.copy(b).divideScalar(rb);
+    return out.copy(_blendA.lerp(_blendB, t).normalize()).multiplyScalar(ra * Math.pow(rb / ra, t));
 }
 
 function setPullFarStars(on) {
@@ -6053,13 +6077,6 @@ function updateScaleKeys() {
 
 function setScaleValue(sv, animate) {
     scaleValue = THREE.MathUtils.clamp(sv, 0, 1);
-    // Stars glide between true and pulled-in distances instead of jumping
-    const pulled = starsPulledInAt(scaleValue);
-    if (pulled !== starsPulledInNow) {
-        starsPulledInNow = pulled;
-        startStarMorph();
-        animate = true; // the glide needs per-frame layout updates, even mid-drag
-    }
     scaleMode = scaleValue >= 0.999 ? 'realistic' : 'compressed';
     const target = computeScaleLayout(scaleValue);
     if (animate) {
@@ -6082,8 +6099,13 @@ function applyScaleTransition() {
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in-out
     const { from, to } = scaleTransition;
     const geo = (a2, b2) => a2 * Math.pow(b2 / a2, e);
+    // Pull-in weight eases between the two; its scale falls back to the other
+    // end's when one side has none (toggling the checkbox)
+    const fromPU = from.starUPulled || to.starUPulled, toPU = to.starUPulled || from.starUPulled;
     const mid = { k: geo(from.k, to.k), planets: new Map(), moons: new Map(), starU: geo(from.starU, to.starU),
-        systemEdge: geo(from.systemEdge ?? to.systemEdge, to.systemEdge), pulled: to.pulled };
+        systemEdge: geo(from.systemEdge ?? to.systemEdge, to.systemEdge),
+        starBlend: THREE.MathUtils.lerp(from.starBlend || 0, to.starBlend || 0, e),
+        starUPulled: fromPU ? geo(fromPU, toPU) : 0 };
     to.planets.forEach((r, n) => mid.planets.set(n, geo(from.planets.get(n) ?? r, r)));
     to.moons.forEach((r, n) => mid.moons.set(n, geo(from.moons.get(n) ?? r, r)));
     applyLayout(mid);
@@ -6830,14 +6852,13 @@ function createSizeComparisonView() {
             mesh.scale.set(scale, scale, scale);
         }
 
-        // Black holes: add event horizon glow in local space (scales with the mesh)
+        // Black holes: ray-traced disk and shadow in local space (scales with the mesh)
         if (data.type === 'blackhole') {
-            addBlackHoleEffects(mesh, actualGeoRadius, data.accretionColor || 0xFF4400, 1.4);
+            mesh.add(createBlackHoleVisual(actualGeoRadius, data.accretionColor || 0xFF7A30, data.name.length, stellarTime));
         }
         
-        // Black holes have an accretion disk out to 1.4x their radius,
-        // so we need to use that as their visual boundary for spacing.
-        const renderRadius = data.type === 'blackhole' ? targetRadius * 1.4 : targetRadius;
+        // Black holes' disks and lensed arcs reach ~9 Rs, so space by that
+        const renderRadius = data.type === 'blackhole' ? targetRadius * BLACK_HOLE_REACH : targetRadius;
 
         // Position object - add spacing based on size to prevent overlap,
         // using renderRadius so halos don't overlap previous objects.
@@ -8752,6 +8773,56 @@ function createInterstellarFlight(
         },
         startDistanceToTarget: Math.max(pullbackPos.distanceTo(endTarget), 0.001),
         endDistanceToTarget: Math.max(endPos.distanceTo(endTarget), 0.001)
+    };
+}
+
+// Camera offset from a distant object that keeps home in view: along the
+// home → object line past the object, swung STAR_VIEW_SIDE around the vertical
+// and raised STAR_VIEW_UP. Seen from there, home lies about that far off the
+// view centre (well inside a 60° field of view).
+const STAR_VIEW_SIDE = THREE.MathUtils.degToRad(20);
+const STAR_VIEW_UP = THREE.MathUtils.degToRad(10);
+function homeInViewOffset(objectPos, distance) {
+    const away = objectPos.clone();
+    if (away.lengthSq() < 1e-6) away.set(0.35, 0.15, 1);
+    away.normalize();
+    const az = Math.atan2(away.x, away.z) + STAR_VIEW_SIDE;
+    const el = Math.asin(THREE.MathUtils.clamp(away.y, -1, 1)) + STAR_VIEW_UP;
+    return new THREE.Vector3(Math.cos(el) * Math.sin(az), Math.sin(el), Math.cos(el) * Math.cos(az))
+        .multiplyScalar(distance);
+}
+
+// Orbit-in flight to a distant object: the view turns to face the object over
+// the first ~25%, the distance closes on a log curve (steady apparent growth
+// instead of a dot until the last moment), and from ~30% the camera swings
+// around the object (azimuth/elevation) to its home-in-view spot. The object
+// stays centred and nothing snaps at the end. The replaced straight-line
+// flight aimed at a point beside the object, so the view whipped around as the
+// camera passed it.
+function createOrbitApproach(objectPos, endOffset, travelDistance) {
+    const startPos = camera.position.clone();
+    const rel = startPos.clone().sub(objectPos);
+    const rStart = Math.max(rel.length(), 1e-6);
+    const toSpherical = v => {
+        const n = v.clone().normalize();
+        return { az: Math.atan2(n.x, n.z), el: Math.asin(THREE.MathUtils.clamp(n.y, -1, 1)) };
+    };
+    const a = toSpherical(rel), b = toSpherical(endOffset);
+    let dAz = b.az - a.az;
+    dAz = Math.atan2(Math.sin(dAz), Math.cos(dAz)); // shortest way round
+    const ratio = Math.max(rStart / Math.max(endOffset.length(), 1e-6), 1);
+    return {
+        orbitApproach: true,
+        startPos,
+        startTarget: controls.target.clone(),
+        endPos: objectPos.clone().add(endOffset),
+        endTarget: objectPos.clone(),
+        offset: endOffset.clone(), // the wheel scales this during the flight
+        startTime: Date.now(),
+        duration: THREE.MathUtils.clamp(2400 + 900 * Math.log10(ratio), 2400, 7000),
+        rStart,
+        az0: a.az, dAz,
+        el0: a.el, el1: b.el
     };
 }
 
