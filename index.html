@@ -176,6 +176,17 @@
                     <label class="popup-row"><input type="checkbox" id="menu-small-true-size"> True size <span class="popup-hint">tiny: pick from the list, then zoom in</span></label>
                 </div>
             </div>
+            <!-- Weather menu -->
+            <div class="popup-menu" id="weather-menu">
+                <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
+                    <span class="toggle-label">Weather</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel" role="menu">
+                    <label class="popup-row"><input type="checkbox" id="menu-weather-clouds"> Clouds <span class="popup-hint" id="weather-clouds-status">live, every 3 h</span></label>
+                    <div class="popup-hint popup-note">Today's real cloud cover from weather satellites. It fades away when the timeline is more than a day or two from now; click Now to bring it back.</div>
+                </div>
+            </div>
             <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
                 <span class="toggle-label">Satellites:</span>
                 <span id="satellites-mode">On</span>
@@ -317,6 +328,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=118"></script>
+    <script type="module" src="js/main.js?v=122"></script>
 </body>
 </html>

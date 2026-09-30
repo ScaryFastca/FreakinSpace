@@ -145,6 +145,7 @@ bump it when the CSS changes.
 | ISS orbit | [Where the ISS at?](https://wheretheiss.at/) API | Free public API |
 | Satellite orbits | [CelesTrak](https://celestrak.org/) | Free public data |
 | Orbit propagation | [satellite.js](https://github.com/shashwatak/satellite-js) (SGP4) | MIT |
+| Live cloud cover | [clouds.matteason.co.uk](https://clouds.matteason.co.uk/) (geostationary weather satellites: EUMETSAT, NOAA, JMA) | Free to use with credit |
 | Satellite imagery | Esri World Imagery (Esri, Maxar, Earthstar Geographics, and the GIS User Community) | Esri terms of use |
 | Night street map | Esri Dark Gray Canvas (Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS User Community) | Esri terms of use |
 | Night sky stars | [HYG Database](https://github.com/astronexus/HYG-Database) v4.1 | CC BY-SA 4.0 |

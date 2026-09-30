@@ -1,15 +1,16 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=118';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=122';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=118';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=118';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=118';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=118';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=118';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=122';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=122';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=122';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=122';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=122';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=122';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=118';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=118';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=122';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=122';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1475,6 +1476,7 @@ function init() {
     setupPopupMenus();
     setupScaleMenu();
     setupSmallBodiesMenu();
+    setupWeatherMenu();
     setupBodyInfoPeek();
     
 
@@ -3530,6 +3532,7 @@ function animate() {
     // International Space Station, placed from its real orbit at simDate
     updateISS(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
     updateGlobeMode(celestialBodies.get('Earth')?.mesh, camera, viewMode === 'map');
+    updateWeather(celestialBodies.get('Earth')?.mesh, camera, simDate, viewMode === 'map');
     updateSatellites(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
 
     // Headlight for size comparison: light objects from the camera's viewpoint
@@ -5978,6 +5981,28 @@ function setupSmallBodiesMenu() {
         const body = currentFocusedBody && celestialBodies.get(currentFocusedBody);
         if (body?.type === 'smallbody') controls.minDistance = body.mesh.userData.visualRadius * 1.3;
     });
+}
+
+// ── Weather menu (bottom bar) ───────────────────────────────────────────
+const WEATHER_CLOUDS_KEY = 'weather:clouds:v1';
+function setupWeatherMenu() {
+    const box = document.getElementById('menu-weather-clouds');
+    const status = document.getElementById('weather-clouds-status');
+    if (!box) return;
+    const apply = on => {
+        box.checked = on;
+        setCloudLayer(on, celestialBodies.get('Earth')?.mesh, { sunDirView: earthNightUniforms.uSunDirView });
+    };
+    // Off by default (it costs GPU time on big screens); remember the choice
+    apply(localStorage.getItem(WEATHER_CLOUDS_KEY) === 'on');
+    box.addEventListener('change', () => {
+        apply(box.checked);
+        try { localStorage.setItem(WEATHER_CLOUDS_KEY, box.checked ? 'on' : 'off'); } catch { /* private mode */ }
+    });
+    // Reflect load failures in the menu
+    setInterval(() => {
+        if (status) status.textContent = cloudLayerStatus() === 'unavailable' ? 'unavailable right now' : 'live, every 3 h';
+    }, 5000);
 }
 
 // ── Scale menu (bottom bar) ─────────────────────────────────────────────
