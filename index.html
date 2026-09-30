@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=23">
+    <link rel="stylesheet" href="css/styles.css?v=25">
     <script type="importmap">
     {
         "imports": {
@@ -157,6 +157,9 @@
                     <label class="popup-row"><input type="radio" name="star-scale" value="near" checked> Compressed (near stars)</label>
                     <label class="popup-row"><input type="radio" name="star-scale" value="far"> Compressed (far stars)</label>
                     <label class="popup-row"><input type="radio" name="star-scale" value="realistic"> Realistic</label>
+                    <div class="popup-heading"></div>
+                    <label class="popup-row"><input type="checkbox" id="menu-pull-far-stars"> Pull far objects in <span class="popup-hint">not to scale</span></label>
+                    <div class="popup-hint popup-note" id="pull-far-note">Brings giant stars, galaxies and quasars in close for comparing (distances squeezed logarithmically; nothing overlaps)</div>
                 </div>
             </div>
             <!-- Small bodies menu -->
@@ -328,6 +331,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=122"></script>
+    <script type="module" src="js/main.js?v=127"></script>
 </body>
 </html>

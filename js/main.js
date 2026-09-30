@@ -1,16 +1,16 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=122';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb, addBlackHoleEffects } from './stellarEffects.js?v=127';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=122';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=122';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=122';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=122';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=122';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=122';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=127';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=127';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=127';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=127';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=127';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=127';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=122';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=122';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=127';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=127';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -644,6 +644,11 @@ const STAR_UNITS_PER_LY_MIN = Math.pow(500 / Math.pow(STAR_UNITS_PER_LY_REALISTI
 let scaleValue = SCALE_PRESETS.compressed;
 let currentUnitsPerAU = 100;     // live values for readouts / scale bar
 let currentStarUnitsPerLy = 500;
+let currentSystemEdge = 0;
+let pullFarStars = false; // Stars menu: log-compress distant objects' distances (not to scale)
+// ...only with compressed scales: Realistic always shows true distances
+const starsPulledInAt = sv => pullFarStars && sv < 0.999;
+let starsPulledInNow = false; // state last laid out (to animate when it flips)
 // With realistic distances the stars are always realistic; the Stars menu's
 // near/far choice is for decluttering compressed views.
 const effectiveStarScale = () => (scaleValue >= 0.999 ? 'realistic' : starScaleMode);
@@ -1401,7 +1406,7 @@ function init() {
     createStarField();
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; } };
 
     // Spacetime grid removed
 
@@ -1493,15 +1498,7 @@ function init() {
     
     document.getElementById('home-btn').addEventListener('click', () => flyToEarth());
 
-    const sidebarToggle = document.getElementById('sidebar-toggle');
-    if (sidebarToggle) {
-        sidebarToggle.addEventListener('click', () => {
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar) {
-                sidebar.classList.toggle('collapsed');
-            }
-        });
-    }
+    setupSidebarPeek();
 
     const minimizeInfo = document.getElementById('minimize-info');
     if (minimizeInfo) {
@@ -1691,10 +1688,12 @@ function init() {
     // Prevent sidebar scroll from affecting the map
     const sidebar = document.getElementById('sidebar');
     if (sidebar) {
-        // Start with the object drawer open on roomy desktop viewports.
-        // This runs only at startup so a user's manual toggle is not overridden later.
+        // Start with the object drawer open on roomy desktop viewports so
+        // it's discoverable, then slide it away (like the info panel)
         if (LARGE_DESKTOP_LAYOUT_MQ.matches && !isMobileLayout()) {
             sidebar.classList.remove('collapsed');
+            sidebarPeek.state = 'peek';
+            scheduleSidebarTuck();
         }
 
         sidebar.addEventListener('wheel', (e) => {
@@ -5018,12 +5017,18 @@ function hideBodyInfo() {
 const INFO_PEEK_MS = 2000;
 let infoTuckTimer = null;
 
+// The tab (::before) lives in the panel's scroll area, so tuck from the top
+function tuckBodyInfo(panel) {
+    panel.scrollTop = 0;
+    panel.classList.add('tucked');
+}
+
 function peekBodyInfo() {
     const panel = document.getElementById('body-info');
     clearTimeout(infoTuckTimer);
     panel.classList.remove('tucked');
     if (isMobileLayout()) return;
-    if (!panel.matches(':hover')) infoTuckTimer = setTimeout(() => panel.classList.add('tucked'), INFO_PEEK_MS);
+    if (!panel.matches(':hover')) infoTuckTimer = setTimeout(() => tuckBodyInfo(panel), INFO_PEEK_MS);
 }
 
 function setupBodyInfoPeek() {
@@ -5036,13 +5041,56 @@ function setupBodyInfoPeek() {
     panel.addEventListener('mouseleave', () => {
         if (panel.classList.contains('hidden') || isMobileLayout()) return;
         clearTimeout(infoTuckTimer);
-        infoTuckTimer = setTimeout(() => panel.classList.add('tucked'), INFO_PEEK_MS);
+        infoTuckTimer = setTimeout(() => tuckBodyInfo(panel), INFO_PEEK_MS);
     });
     // Touch screens/pens have no hover: tapping the tab opens it
     panel.addEventListener('click', (e) => {
         if (!panel.classList.contains('tucked')) return;
         e.stopPropagation();
         peekBodyInfo();
+    });
+}
+
+// Object list drawer (desktop): hovering the tab slides it out without a
+// click and it slides away SIDEBAR_PEEK_MS after the mouse leaves; clicking
+// the tab pins it open or shut. Touch/pen (no hover) just toggle on tap.
+const SIDEBAR_PEEK_MS = 2000;
+const sidebarPeek = { state: 'closed', timer: null }; // 'closed' | 'peek' | 'pinned'
+
+function scheduleSidebarTuck() {
+    const sidebar = document.getElementById('sidebar');
+    clearTimeout(sidebarPeek.timer);
+    sidebarPeek.timer = setTimeout(() => {
+        if (sidebarPeek.state !== 'peek' || sidebar.matches(':hover')) return;
+        sidebar.classList.add('collapsed');
+        sidebarPeek.state = 'closed';
+    }, SIDEBAR_PEEK_MS);
+}
+
+function setupSidebarPeek() {
+    const sidebar = document.getElementById('sidebar');
+    const toggle = document.getElementById('sidebar-toggle');
+    if (!sidebar || !toggle) return;
+    toggle.addEventListener('pointerenter', (e) => {
+        if (e.pointerType !== 'mouse' || isMobileLayout() || sidebarPeek.state !== 'closed') return;
+        sidebar.classList.remove('collapsed');
+        sidebarPeek.state = 'peek';
+    });
+    sidebar.addEventListener('pointerenter', (e) => {
+        if (e.pointerType === 'mouse') clearTimeout(sidebarPeek.timer);
+    });
+    sidebar.addEventListener('pointerleave', (e) => {
+        if (e.pointerType === 'mouse' && sidebarPeek.state === 'peek') scheduleSidebarTuck();
+    });
+    toggle.addEventListener('click', () => {
+        clearTimeout(sidebarPeek.timer);
+        // Opened by hovering → a click keeps it open; otherwise flip it
+        if (sidebarPeek.state === 'peek') {
+            sidebarPeek.state = 'pinned';
+            return;
+        }
+        const open = sidebar.classList.toggle('collapsed') === false;
+        sidebarPeek.state = open ? 'pinned' : 'closed';
     });
 }
 
@@ -5351,7 +5399,8 @@ function updateUI() {
     // Live scale (continuous Scale slider): AU and light-year sizes in units
     let label;
     if (dist > currentUnitsPerAU * 100) { // deep space (beyond ~100 AU); Solar System views stay in AU
-        label = formatScaleValue(scaleBarWidthWorld / currentStarUnitsPerLy) + " Light Years";
+        // Pulled-in star distances are logarithmic: no single light-year scale
+        label = starsPulledInNow ? 'Not to scale' : formatScaleValue(scaleBarWidthWorld / currentStarUnitsPerLy) + " Light Years";
     } else {
         const au = scaleBarWidthWorld / currentUnitsPerAU;
         if (au < 0.1) {
@@ -5753,7 +5802,17 @@ function getStarLayoutInfo() {
         if (!body || !body.isDistant) return;
         const p = calculateStarPosition(starData);
         const posLy = new THREE.Vector3(p.x, p.y, p.z);
-        starLayoutInfo.push({ body, posLy, distLy: posLy.length(), ext: starSystemExtent(body) });
+        const distLy = posLy.length();
+        const dir = distLy > 1e-9 ? posLy.clone().divideScalar(distLy) : new THREE.Vector3(1, 0, 0);
+        starLayoutInfo.push({ body, posLy, distLy, dir, ext: starSystemExtent(body) });
+    });
+    // "Pull far objects in": logarithmic distances beyond the nearest star, so
+    // every ×10 in true distance adds the same step (TON 618 at 18 billion ly
+    // lands ~25× further than Proxima instead of ~4 billion×). Order and
+    // direction are kept; nearer than the nearest star is unchanged.
+    const d0 = Math.min(...starLayoutInfo.filter(st => st.distLy > 1e-6).map(st => st.distLy));
+    starLayoutInfo.forEach(st => {
+        st.logLy = st.distLy <= d0 ? st.distLy : d0 * (1 + Math.log(st.distLy / d0));
     });
     // Pairwise floor: two stars' systems plus a gap must fit between them
     for (let i = 0; i < starLayoutInfo.length; i++) {
@@ -5774,9 +5833,11 @@ function getStarLayoutInfo() {
 // system kept moving. Gaps between neighbours are log-concave along this path,
 // so they're never smaller than at the two (clip-free) ends.
 function computeScaleLayout(sv) {
-    const a = computeRawScaleLayout(0), b = computeRawScaleLayout(1);
+    const pulled = starsPulledInAt(sv);
+    const a = computeRawScaleLayout(0, pulled), b = computeRawScaleLayout(1, pulled);
     const geo = (x, y) => x * Math.pow(y / x, sv);
-    const layout = { k: geo(a.k, b.k), planets: new Map(), moons: new Map(), starU: geo(a.starU, b.starU) };
+    const layout = { k: geo(a.k, b.k), planets: new Map(), moons: new Map(), starU: geo(a.starU, b.starU),
+        systemEdge: geo(a.systemEdge, b.systemEdge), pulled };
     b.planets.forEach((r, n) => layout.planets.set(n, geo(a.planets.get(n) ?? r, r)));
     b.moons.forEach((r, n) => layout.moons.set(n, geo(a.moons.get(n) ?? r, r)));
     return layout;
@@ -5784,7 +5845,7 @@ function computeScaleLayout(sv) {
 
 // Layout from "true distance × scale" with no-clip floors; used for the two
 // ends of the slider (see SCALE_PRESETS)
-function computeRawScaleLayout(sv) {
+function computeRawScaleLayout(sv, pulled = starsPulledInAt(sv)) {
     const lerpLog = ([lo, hi], t) => lo * Math.pow(hi / lo, t);
     const k = lerpLog(PLANET_UNITS_PER_AU, sv);
     const km = lerpLog(MOON_SCALE, sv);
@@ -5826,7 +5887,19 @@ function computeRawScaleLayout(sv) {
     const outermost = planets[planets.length - 1];
     if (outermost) layout.k = Math.max(k, prevOrbit / (outermost.distance / AU));
 
-    if (sv < 0.999 && starScaleMode !== 'realistic') {
+    layout.systemEdge = systemEdge;
+    layout.pulled = pulled;
+    if (pulled) {
+        // Distances are log-compressed (not to scale anyway). The field scales
+        // only enough for every star system to clear the Solar System; tight
+        // pairs are then nudged apart locally (layoutPulledInStars) so one
+        // close pair doesn't push the whole field back out.
+        let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv);
+        for (const st of getStarLayoutInfo()) {
+            if (st.logLy > 1e-6) u = Math.max(u, (systemEdge + st.ext) * 1.2 / st.logLy);
+        }
+        layout.starU = u;
+    } else if (sv < 0.999 && starScaleMode !== 'realistic') {
         let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv) * (starScaleMode === 'far' ? 5 : 1);
         u = Math.min(u, STAR_UNITS_PER_LY_REALISTIC);
         const info = getStarLayoutInfo();
@@ -5840,7 +5913,8 @@ function computeRawScaleLayout(sv) {
 }
 
 function captureCurrentLayout() {
-    const layout = { k: currentUnitsPerAU, planets: new Map(), moons: new Map(), starU: currentStarUnitsPerLy };
+    const layout = { k: currentUnitsPerAU, planets: new Map(), moons: new Map(), starU: currentStarUnitsPerLy,
+        systemEdge: currentSystemEdge };
     solarSystem.children.forEach(pd => {
         const body = celestialBodies.get(pd.name);
         if (body?.orbitGroup) layout.planets.set(pd.name, body.orbitRadius);
@@ -5869,10 +5943,82 @@ function applyLayout(layout) {
         layout.planets.forEach((r, name) => placeRealisticPlanet(celestialBodies.get(name), d));
     }
     layout.moons.forEach((r, name) => { celestialBodies.get(name).orbitRadius = r; });
-    getStarLayoutInfo().forEach(st => st.body.mesh.position.copy(st.posLy).multiplyScalar(layout.starU));
+    const starTargets = layout.pulled
+        ? layoutPulledInStars(layout.starU, layout.systemEdge)
+        : getStarLayoutInfo().map(st => st.posLy.clone().multiplyScalar(layout.starU));
+    getStarLayoutInfo().forEach((st, i) => placeStar(st, starTargets[i]));
     currentUnitsPerAU = layout.k;
     currentStarUnitsPerLy = layout.starU;
+    currentSystemEdge = layout.systemEdge;
     realisticMoonPositionsDirty = true; // moons re-placed even while paused
+}
+
+// Pulled-in star positions (scene units): log distance × starU, each star at
+// least clear of the Solar System, then any two systems closer than their
+// sizes (plus 20%) nudged apart along the line between them. Log compression
+// can bring stars that are far apart in reality close together (two LMC stars
+// a few degrees apart), and fixing those locally keeps the rest of the field
+// in close. Pairs at the same spot (binaries) are skipped, as in the linear
+// layout. ~77 stars → a few thousand pair checks per pass, converging in a
+// handful of passes.
+function layoutPulledInStars(starU, systemEdge) {
+    const info = getStarLayoutInfo();
+    const P = info.map(st => st.dir.clone().multiplyScalar(Math.max(st.logLy * starU, 1.2 * (systemEdge + st.ext))));
+    const d = new THREE.Vector3();
+    for (let pass = 0; pass < 40; pass++) {
+        let moved = false;
+        for (let i = 0; i < info.length; i++) {
+            for (let j = i + 1; j < info.length; j++) {
+                if (info[i].posLy.distanceToSquared(info[j].posLy) < 1e-12) continue;
+                const need = 1.2 * (info[i].ext + info[j].ext);
+                d.subVectors(P[i], P[j]);
+                const len = d.length();
+                if (len >= need) continue;
+                if (len < 1e-9) d.copy(info[i].dir).sub(info[j].dir); else d.divideScalar(len);
+                if (d.lengthSq() < 1e-12) d.set(0, 1, 0);
+                d.normalize().multiplyScalar((need - len) * 0.5 + 1e-3);
+                P[i].add(d);
+                P[j].sub(d);
+                moved = true;
+            }
+        }
+        // Keep everything clear of the Solar System after the nudges
+        info.forEach((st, i) => {
+            const minR = 1.2 * (systemEdge + st.ext);
+            if (P[i].length() < minR) { P[i].setLength(minR); moved = true; }
+        });
+        if (!moved) break;
+    }
+    return P;
+}
+
+// Star placement, blending from the previous layout while the pull-in toggle
+// animates (radius geometric, direction slerped, like the scale glide)
+let starMorph = null; // { from: Vector3[], start }
+const _morphA = new THREE.Vector3(), _morphB = new THREE.Vector3();
+function placeStar(st, target) {
+    if (!starMorph) { st.body.mesh.position.copy(target); return; }
+    const t = Math.min(1, (performance.now() - starMorph.start) / SCALE_TRANSITION_MS);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const from = starMorph.from.get(st.body.data.name) || target;
+    const r0 = Math.max(from.length(), 1e-6), r1 = Math.max(target.length(), 1e-6);
+    _morphA.copy(from).divideScalar(r0);
+    _morphB.copy(target).divideScalar(r1);
+    _morphA.lerp(_morphB, e).normalize();
+    st.body.mesh.position.copy(_morphA).multiplyScalar(r0 * Math.pow(r1 / r0, e));
+}
+
+let starMorphTimer = null;
+function startStarMorph() {
+    starMorph = { start: performance.now(), from: new Map(getStarLayoutInfo().map(st => [st.body.data.name, st.body.mesh.position.clone()])) };
+    clearTimeout(starMorphTimer);
+    starMorphTimer = setTimeout(() => { starMorph = null; setScaleValue(scaleValue, false); }, SCALE_TRANSITION_MS + 50);
+}
+
+function setPullFarStars(on) {
+    if (on === pullFarStars) return;
+    pullFarStars = on;
+    setScaleValue(scaleValue, true);
 }
 
 // Change the scale; animate for presets (1.6 s, geometric so a 10× change
@@ -5907,6 +6053,13 @@ function updateScaleKeys() {
 
 function setScaleValue(sv, animate) {
     scaleValue = THREE.MathUtils.clamp(sv, 0, 1);
+    // Stars glide between true and pulled-in distances instead of jumping
+    const pulled = starsPulledInAt(scaleValue);
+    if (pulled !== starsPulledInNow) {
+        starsPulledInNow = pulled;
+        startStarMorph();
+        animate = true; // the glide needs per-frame layout updates, even mid-drag
+    }
     scaleMode = scaleValue >= 0.999 ? 'realistic' : 'compressed';
     const target = computeScaleLayout(scaleValue);
     if (animate) {
@@ -5929,7 +6082,8 @@ function applyScaleTransition() {
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in-out
     const { from, to } = scaleTransition;
     const geo = (a2, b2) => a2 * Math.pow(b2 / a2, e);
-    const mid = { k: geo(from.k, to.k), planets: new Map(), moons: new Map(), starU: geo(from.starU, to.starU) };
+    const mid = { k: geo(from.k, to.k), planets: new Map(), moons: new Map(), starU: geo(from.starU, to.starU),
+        systemEdge: geo(from.systemEdge ?? to.systemEdge, to.systemEdge), pulled: to.pulled };
     to.planets.forEach((r, n) => mid.planets.set(n, geo(from.planets.get(n) ?? r, r)));
     to.moons.forEach((r, n) => mid.moons.set(n, geo(from.moons.get(n) ?? r, r)));
     applyLayout(mid);
@@ -6308,16 +6462,29 @@ function syncStarsMenu() {
     set('menu-background-stars', showStars);
     set('menu-big-stars', showBigStars);
     set('menu-constellations', showConstellations);
-    const locked = scaleMode === 'realistic';
+    set('menu-pull-far-stars', pullFarStars);
+    const pullBox = document.getElementById('menu-pull-far-stars');
+    if (pullBox) {
+        pullBox.disabled = scaleMode === 'realistic';
+        pullBox.closest('.popup-row')?.classList.toggle('disabled', pullBox.disabled);
+    }
+    const pullNote = document.getElementById('pull-far-note');
+    if (pullNote) pullNote.textContent = scaleMode === 'realistic'
+        ? 'Realistic scale always shows true distances; pick Compressed or Max to pull far objects in'
+        : 'Brings giant stars, galaxies and quasars in close for comparing (distances squeezed logarithmically; nothing overlaps)';
+    // Pulling far objects in replaces the star-scale choice
+    const locked = scaleMode === 'realistic' || starsPulledInNow;
     document.querySelectorAll('input[name="star-scale"]').forEach(r => {
         r.checked = r.value === effectiveStarScale();
         r.disabled = locked;
         r.closest('.popup-row')?.classList.toggle('disabled', locked);
     });
     const note = document.getElementById('star-scale-note');
-    if (note) note.hidden = !locked;
+    if (note) note.hidden = !(scaleMode === 'realistic');
     const summary = document.getElementById('stars-menu-summary');
-    if (summary) summary.textContent = STAR_SCALES[effectiveStarScale()].label.replace('Compressed ', '').replace(/[()]/g, '');
+    if (summary) summary.textContent = starsPulledInNow
+        ? 'pulled in'
+        : STAR_SCALES[effectiveStarScale()].label.replace('Compressed ', '').replace(/[()]/g, '');
 }
 
 // Hover opens on devices with a mouse; click/tap toggles everywhere (phones)
@@ -6343,6 +6510,10 @@ function setupPopupMenus() {
     document.getElementById('menu-constellations')?.addEventListener('change', toggleConstellations);
     document.querySelectorAll('input[name="star-scale"]').forEach(r =>
         r.addEventListener('change', () => { if (r.checked) setStarScale(r.value); }));
+    document.getElementById('menu-pull-far-stars')?.addEventListener('change', e => {
+        setPullFarStars(e.target.checked);
+        syncStarsMenu();
+    });
     syncStarsMenu();
 }
 
