@@ -17,12 +17,19 @@ const MODEL_URL = 'models/iss.glb';
 // The .glb is Draco-compressed; decoder comes from the same three.js release
 const DRACO_DECODER_PATH = 'https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/gltf/';
 const MODEL_SPAN = 0.044; // scene units across the truss, same as the fallback
+// NASA's detailed, textured model (NASA Visualization Technology Applications
+// and Development, public domain; 44 MB original, Draco + WebP 1K textures).
+// Loaded only once the camera comes close, then swapped in
+const HD_MODEL_URL = 'models/iss_hd.glb';
+const HD_LOAD_DISTANCE = MODEL_SPAN * 60;
 
 let sat = null;       // satellite.js module
 let satrec = null;
 let issGroup = null;
 let trailLine = null;
 let lastTrailUpdate = 0;
+let modelHolder = null;   // the model currently shown
+let hdState = null;       // null → 'loading' → 'done' | 'failed'
 export let issState = null; // { lat, lon, altKm, speedKms } for UI/debug
 
 // Body data for the object list / info card. `distance` is kept at the live
@@ -105,28 +112,25 @@ function buildModel() {
     return group;
 }
 
-// Swap the box model for NASA's once it loads. In the .glb the truss runs
-// along Z, modules and solar wings along Y, and X is "up"; remap to this
-// group's frame (truss X, modules along travel Z, radial up Y).
-function loadNasaModel(group, fallback) {
-    const loader = new GLTFLoader();
-    loader.setDRACOLoader(new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH));
-    loader.load(MODEL_URL, gltf => {
-        const model = gltf.scene;
-        // The file includes a few loose spare-part meshes floating ~20 m away
-        const strays = [];
-        model.traverse(o => { if (o.isMesh && /^(bendedtru|pCylinder)/.test(o.name)) strays.push(o); });
-        strays.forEach(o => o.removeFromParent());
+let gltfLoader = null;
+function getLoader() {
+    if (!gltfLoader) {
+        gltfLoader = new GLTFLoader();
+        gltfLoader.setDRACOLoader(new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH));
+    }
+    return gltfLoader;
+}
 
+// Load a model into the group, scaled so the truss spans MODEL_SPAN, and
+// swap it in for whatever is showing. `axes` remaps the file's axes to this
+// group's frame (truss X, modules along travel Z, radial up Y)
+function loadModel(group, url, axes, prepare, onFail) {
+    getLoader().load(url, gltf => {
+        const model = gltf.scene;
+        prepare?.(model);
         const holder = new THREE.Group();
         holder.add(model);
-        // Rows map model axes to ours: X←Z, Y←X, Z←Y
-        model.applyMatrix4(new THREE.Matrix4().set(
-            0, 0, 1, 0,
-            1, 0, 0, 0,
-            0, 1, 0, 0,
-            0, 0, 0, 1
-        ));
+        model.applyMatrix4(axes);
         const box = new THREE.Box3().setFromObject(holder);
         const size = box.getSize(new THREE.Vector3());
         const scale = MODEL_SPAN / size.x;
@@ -139,9 +143,65 @@ function loadNasaModel(group, fallback) {
             delete o.userData.name;
         });
 
-        group.remove(fallback);
+        if (modelHolder) group.remove(modelHolder);
         group.add(holder);
-    }, undefined, err => console.warn('NASA ISS model failed to load; using fallback:', err));
+        modelHolder = holder;
+    }, undefined, err => onFail?.(err));
+}
+
+// The simple NASA model: in the .glb the truss runs along Z, modules and
+// solar wings along Y, and X is "up". Rows map model axes to ours: X←Z, Y←X, Z←Y
+function loadNasaModel(group, fallback) {
+    modelHolder = fallback;
+    loadModel(group, MODEL_URL, new THREE.Matrix4().set(
+        0, 0, 1, 0,
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 0, 1
+    ), model => {
+        // The file includes a few loose spare-part meshes floating ~20 m away
+        const strays = [];
+        model.traverse(o => { if (o.isMesh && /^(bendedtru|pCylinder)/.test(o.name)) strays.push(o); });
+        strays.forEach(o => o.removeFromParent());
+    }, err => console.warn('NASA ISS model failed to load; using fallback:', err));
+}
+
+// Soft light to reflect: the detailed model's metal parts (many fully
+// metallic) otherwise render near-black, with nothing around them to mirror
+let envTexture = null;
+function getEnvTexture() {
+    if (envTexture) return envTexture;
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 128;
+    const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 0, 128);
+    gr.addColorStop(0, '#1a1c22'); gr.addColorStop(0.45, '#3a4150');
+    gr.addColorStop(0.55, '#6d8fb8'); gr.addColorStop(1, '#a9c4e0');   // dark space above, bright Earth below
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 128);
+    envTexture = new THREE.CanvasTexture(c);
+    envTexture.mapping = THREE.EquirectangularReflectionMapping;
+    envTexture.colorSpace = THREE.SRGBColorSpace;
+    return envTexture;
+}
+
+// The detailed model: truss along X, radial up +Y, modules along Z
+function loadDetailedModel(group) {
+    hdState = 'loading';
+    loadModel(group, HD_MODEL_URL, new THREE.Matrix4(), model => {
+        model.traverse(o => {
+            if (!o.isMesh) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            mats.forEach(m => {
+                m.envMap = getEnvTexture();
+                m.envMapIntensity = 0.9;
+                m.metalness = Math.min(m.metalness, 0.7);
+            });
+        });
+        hdState = 'done';
+    }, err => {
+        hdState = 'failed';
+        console.warn('Detailed ISS model failed to load; keeping the simple one:', err);
+    });
 }
 
 async function loadTle() {
@@ -168,7 +228,7 @@ const _up = new THREE.Vector3();
 
 // Call each frame after Earth's rotation is set. Children of the Earth mesh
 // inherit its day-spin, so a lat/lon placement lands over the right ground point.
-export function updateISS(earthMesh, simDate, visible = true) {
+export function updateISS(earthMesh, simDate, visible = true, camera = null) {
     if (!sat || !satrec || !earthMesh) return;
     getISSGroup();
     if (!trailLine) {
@@ -204,6 +264,11 @@ export function updateISS(earthMesh, simDate, visible = true) {
         issGroup.up.copy(_pos).applyMatrix4(earthMesh.matrixWorld)
             .sub(earthMesh.getWorldPosition(_up)).normalize();
         issGroup.lookAt(_ahead.applyMatrix4(earthMesh.matrixWorld));
+    }
+
+    // Detailed model once the camera comes close
+    if (!hdState && camera && camera.position.distanceTo(issGroup.getWorldPosition(_up)) < HD_LOAD_DISTANCE) {
+        loadDetailedModel(issGroup);
     }
 
     // Trail is expensive-ish (90 SGP4 calls); refresh at most every 30 s of sim time

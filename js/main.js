@@ -1,17 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=143';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=143';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=192';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=192';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=143';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=143';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=143';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=143';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=143';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=143';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=192';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=192';
+import { initCheeseMoon } from './cheeseMoon.js?v=192';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=192';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=192';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=192';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=192';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=143';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=143';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=192';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=192';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -179,6 +180,7 @@ const earthNightUniforms = {
 };
 
 let earthNightTexture = null; // Promise<Texture>, loaded once
+let nightLightsScale = 1;      // city lights dimmed by the cheese-Moon disaster
 
 // Make Earth's material glow with city lights on the night side. Satellite
 // tiles share the same texture through tileLighting.nightMap (no copies: a
@@ -217,12 +219,12 @@ function updateEarthNightUniforms() {
         earthNightUniforms.uNightStrength.value = 0; // size-compare Earth is lit by a headlight
         return;
     }
-    earthNightUniforms.uNightStrength.value = 1.6;
+    earthNightUniforms.uNightStrength.value = 1.6 * nightLightsScale;
     earth.mesh.getWorldPosition(_nightEarthPos);
     earthNightUniforms.uSunDirView.value.copy(_nightEarthPos).negate().normalize()
         .transformDirection(camera.matrixWorldInverse);
     tileLighting.uSunDirView.value.copy(earthNightUniforms.uSunDirView.value);
-    tileLighting.uNightStrength.value = tileLighting.nightMap.value.image?.width > 1 ? 1.6 : 0;
+    tileLighting.uNightStrength.value = tileLighting.nightMap.value.image?.width > 1 ? 1.6 * nightLightsScale : 0;
 }
 
 // Gravity well calculations - approximate masses relative to Earth (Earth = 1)
@@ -646,16 +648,43 @@ let scaleValue = SCALE_PRESETS.compressed;
 let currentUnitsPerAU = 100;     // live values for readouts / scale bar
 let currentStarUnitsPerLy = 500;
 let currentSystemEdge = 0;
+let cheeseMoon = null; // easter egg (js/cheeseMoon.js)
 let pullFarStars = false; // Stars menu: log-compress distant objects' distances (not to scale)
 // ...only with compressed scales: Realistic always shows true distances
-// How pulled in the far objects are at a slider position: fully from Max
-// through Compressed, then blending continuously to true distances at
-// Realistic. Tied to the slider (not a timed glide), so dragging it or
-// holding W/S moves the far objects smoothly in step with everything else.
-const PULL_FADE = [0.6, 1.0];
-const starPullAt = sv => pullFarStars ? 1 - THREE.MathUtils.smoothstep(sv, PULL_FADE[0], PULL_FADE[1]) : 0;
+// Pull-in weight: 1 when "Pull far objects in" is on, 0 when off. Toggling
+// animates it (scale transitions lerp starBlend), blending the two layouts.
+const starPullAt = () => (pullFarStars ? 1 : 0);
 let starsPulledInNow = false; // pull-in weight last laid out > 0 (labels, menu)
-let currentStarBlend = 0, currentStarUPulled = 0;
+let currentStarBlend = 0, currentSv = 0;
+// Pulled-in arrangement at the tightest scale (Max), computed once. With the
+// toggle on, each object then glides on its own fixed direction from this
+// spot (sv 0) to its true position (sv 1), geometrically like the planets,
+// with a weight that stays mostly pulled in through Compressed:
+//   r(sv) = max(r0^(1−w)·r1^w, clear of the Solar System),  w = PULL_W(sv)
+// Every object moves outward at every step (true distances are further than
+// the Max arrangement) and ends exactly at the truth at Realistic. Scaling
+// the arrangement with the Solar System instead carried nearby stars past
+// their true distances, so they drifted back inward near Realistic.
+let pulledRef = null; // { P: Vector3[] }
+function getPulledRef() {
+    if (pulledRef) return pulledRef;
+    const raw0 = computeRawScaleLayout(0, true);
+    pulledRef = { P: layoutPulledInStars(raw0.starU, raw0.systemEdge) };
+    return pulledRef;
+}
+// 0.1·sv + 0.9·sv⁴: ~0.15 at Compressed (still pulled in), 1 at Realistic,
+// and never flat, so objects move from the first nudge off Max
+const PULL_W = sv => 0.1 * sv + 0.9 * sv * sv * sv * sv;
+function pulledPositions(sv, systemEdge) {
+    const ref = getPulledRef();
+    const w = PULL_W(THREE.MathUtils.clamp(sv, 0, 1));
+    return getStarLayoutInfo().map((st, i) => {
+        const r0 = Math.max(ref.P[i].length(), 1e-6);
+        const r1 = Math.max(st.distLy * STAR_UNITS_PER_LY_REALISTIC, r0);
+        const r = Math.max(r0 * Math.pow(r1 / r0, w), 1.2 * (systemEdge + st.ext));
+        return st.dir.clone().multiplyScalar(r);
+    });
+}
 // With realistic distances the stars are always realistic; the Stars menu's
 // near/far choice is for decluttering compressed views.
 const effectiveStarScale = () => (scaleValue >= 0.999 ? 'realistic' : starScaleMode);
@@ -930,7 +959,7 @@ const _spotQuat = new THREE.Quaternion();
 const _spotVec = new THREE.Vector3();
 const _spotEarth = new THREE.Vector3();
 
-function flyToEarthSpot(spotLocalDir) {
+function flyToEarthSpot(spotLocalDir, durationMs = EARTH_SPOT_FLIGHT_MS, endAltKm = null) {
     const earth = celestialBodies.get('Earth');
     if (!earth) return;
     const R = earth.mesh.userData.visualRadius;
@@ -941,11 +970,12 @@ function flyToEarthSpot(spotLocalDir) {
     const startAlt = Math.max(camLocal.length() - R, 1e-6);
     // Satellite-view height: well below where we are, within ~250-2000 km
     const km = R / 6371;
-    const endAlt = THREE.MathUtils.clamp(startAlt * 0.35, 250 * km, 2000 * km);
+    const endAlt = endAltKm ? endAltKm * km : THREE.MathUtils.clamp(startAlt * 0.35, 250 * km, 2000 * km);
     flyToAnimation = null;
     focusRetarget = null;
     earthSpotFlight = {
         start: performance.now(),
+        ms: durationMs,
         fromDir: camLocal.clone().normalize(),
         toDir: spotLocalDir.clone().normalize(),
         fromAlt: startAlt,
@@ -967,7 +997,7 @@ function flyToEarthSpot(spotLocalDir) {
 // Per frame, from the follow block while focused on Earth
 function stepEarthSpotFlight(earthMesh, earthWorld) {
     const f = earthSpotFlight;
-    const t = Math.min(1, (performance.now() - f.start) / EARTH_SPOT_FLIGHT_MS);
+    const t = Math.min(1, (performance.now() - f.start) / f.ms);
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
     const R = earthMesh.userData.visualRadius;
     earthMesh.getWorldQuaternion(_spotQuat);
@@ -1409,11 +1439,17 @@ function init() {
     setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
     // Dwarf planets, asteroid, comet, interstellar objects, spacecraft
     initSmallBodies(scene).forEach(sb => celestialBodies.set(sb.name, { mesh: sb.mesh, data: sb.data, type: 'smallbody' }));
+    // Easter egg: a wedge of cheddar at the Moon's south pole
+    cheeseMoon = initCheeseMoon({
+        moonMesh: celestialBodies.get('Moon')?.mesh, earthMesh: celestialBodies.get('Earth')?.mesh,
+        moonData: celestialBodies.get('Moon')?.data, scene,
+        setNightLights: k => { nightLightsScale = k; }
+    });
     setupStellarReferenceMeshes();
     createStarField();
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; } };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
 
     // Spacetime grid removed
 
@@ -1566,12 +1602,20 @@ function init() {
         if (e.code === 'KeyQ') {
             showOrbitLines = !showOrbitLines;
             camera.layers.toggle(ORBIT_LAYER);
-        } else if ((e.code === 'KeyE' || e.code === 'KeyI') && viewMode === 'map') {
-            const name = e.code === 'KeyE' ? 'Earth' : 'ISS';
+        } else if (e.code === 'KeyR') {
+            endCheeseMoon(false);                 // back to the present (and the plain Moon)
+        } else if ((e.code === 'KeyE' || e.code === 'KeyI' || e.code === 'KeyM') && viewMode === 'map') {
+            const name = { KeyE: 'Earth', KeyI: 'ISS', KeyM: 'Moon' }[e.code];
+            cheeseTour.camera = false;
+            tourGlide = null;
             // The ISS has no position until its TLE loads
-            if (name === 'Earth' || celestialBodies.get(name)?.mesh.visible) focusOnBody(name);
+            if (name !== 'ISS' || celestialBodies.get(name)?.mesh.visible) focusOnBody(name);
         }
     });
+    // Dragging or zooming during the cheese Moon tour hands the camera back
+    const takeCamera = () => { cheeseTour.camera = false; tourGlide = null; };
+    renderer.domElement.addEventListener('pointerdown', takeCamera);
+    renderer.domElement.addEventListener('wheel', takeCamera, { passive: true });
 
     // W / S spread out / compress the distance scale while held; the motion
     // eases in and out (updateScaleKeys), ignoring the OS key auto-repeat
@@ -3545,8 +3589,10 @@ function animate() {
     updateMoonShadows();
 
     // International Space Station, placed from its real orbit at simDate
-    updateISS(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
+    updateISS(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map', camera);
     updateGlobeMode(celestialBodies.get('Earth')?.mesh, camera, viewMode === 'map');
+    cheeseMoon?.update(simDate, viewMode === 'map');
+    updateCheeseTour();
     updateWeather(celestialBodies.get('Earth')?.mesh, camera, simDate, viewMode === 'map');
     updateSatellites(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
 
@@ -3936,6 +3982,7 @@ function animate() {
     controls.enableRotate = !customOrbit;
     if (!customOrbit) chaseDrag.dTheta = chaseDrag.dPhi = 0;
 
+    applyTourGlide();
     prepareEarthSurfaceCamera();
     controls.update();
     finishEarthSurfaceCamera();
@@ -4211,6 +4258,7 @@ function focusOnBody(name) {
     const passengers = meshForSizing.children.filter(child =>
         child === userMarker
         || ['satellites', 'earth tiles', 'ISS trail'].includes(child.name)
+        || child.name.startsWith('cheese')
         || [...celestialBodies.values()].some(b => b.mesh === child));
     passengers.forEach(child => meshForSizing.remove(child));
     const box = new THREE.Box3().setFromObject(meshForSizing);
@@ -4716,6 +4764,13 @@ function onClick(event) {
     }
 
     const intersects = raycaster.intersectObjects(visibleMeshes, true);
+
+    // Easter egg: clicking the cheese wedge on the Moon's south pole
+    if (intersects[0]?.object.userData.isCheeseWedge && cheeseMoon) {
+        cheeseMoon.trigger(simDate);
+        startCheeseTour();
+        return;
+    }
 
     let bodyName = findTinyBodyInFront(event.clientX, event.clientY,
         isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX, intersects)
@@ -5854,11 +5909,7 @@ function computeScaleLayout(sv) {
     const a = computeRawScaleLayout(0, false), b = computeRawScaleLayout(1, false);
     const geo = (x, y) => x * Math.pow(y / x, sv);
     const layout = { k: geo(a.k, b.k), planets: new Map(), moons: new Map(), starU: geo(a.starU, b.starU),
-        systemEdge: geo(a.systemEdge, b.systemEdge), starBlend: starPullAt(sv), starUPulled: 0 };
-    if (layout.starBlend > 0) {
-        const pa = computeRawScaleLayout(0, true), pb = computeRawScaleLayout(1, true);
-        layout.starUPulled = geo(pa.starU, pb.starU);
-    }
+        systemEdge: geo(a.systemEdge, b.systemEdge), starBlend: starPullAt(sv), sv };
     b.planets.forEach((r, n) => layout.planets.set(n, geo(a.planets.get(n) ?? r, r)));
     b.moons.forEach((r, n) => layout.moons.set(n, geo(a.moons.get(n) ?? r, r)));
     return layout;
@@ -5941,7 +5992,7 @@ function computeRawScaleLayout(sv, pulled = false) {
 
 function captureCurrentLayout() {
     const layout = { k: currentUnitsPerAU, planets: new Map(), moons: new Map(), starU: currentStarUnitsPerLy,
-        systemEdge: currentSystemEdge, starBlend: currentStarBlend, starUPulled: currentStarUPulled };
+        systemEdge: currentSystemEdge, starBlend: currentStarBlend, sv: currentSv };
     solarSystem.children.forEach(pd => {
         const body = celestialBodies.get(pd.name);
         if (body?.orbitGroup) layout.planets.set(pd.name, body.orbitRadius);
@@ -5973,7 +6024,7 @@ function applyLayout(layout) {
     // Stars: true-distance layout, pulled-in layout, or a blend between them
     // (distance geometric, direction interpolated) set by the slider position
     const blend = layout.starBlend || 0;
-    const pulledTargets = blend > 0 ? layoutPulledInStars(layout.starUPulled, layout.systemEdge) : null;
+    const pulledTargets = blend > 0 ? pulledPositions(layout.sv ?? scaleValue, layout.systemEdge) : null;
     getStarLayoutInfo().forEach((st, i) => {
         const pos = st.body.mesh.position;
         _starLinear.copy(st.posLy).multiplyScalar(layout.starU);
@@ -5983,7 +6034,7 @@ function applyLayout(layout) {
     });
     starsPulledInNow = blend > 0.01;
     currentStarBlend = blend;
-    currentStarUPulled = layout.starUPulled || 0;
+    currentSv = layout.sv ?? scaleValue;
     currentUnitsPerAU = layout.k;
     currentStarUnitsPerLy = layout.starU;
     currentSystemEdge = layout.systemEdge;
@@ -6000,33 +6051,37 @@ function applyLayout(layout) {
 // handful of passes.
 function layoutPulledInStars(starU, systemEdge) {
     const info = getStarLayoutInfo();
-    const P = info.map(st => st.dir.clone().multiplyScalar(Math.max(st.logLy * starU, 1.2 * (systemEdge + st.ext))));
-    const d = new THREE.Vector3();
+    // Distances along each object's true direction (directions never change)
+    const R = info.map(st => Math.max(st.logLy * starU, 1.2 * (systemEdge + st.ext)));
+    // Close pairs: push the farther one straight outward along its own line
+    // from the Sun until the two clear. Pushing in any direction sent some
+    // stars up to 150° off their real direction (Arcturus), which then swung
+    // across the sky while blending back to true positions. Outward-only moves
+    // keep every direction exact and always converge.
+    const order = info.map((_, i) => i).sort((a, b) => R[a] - R[b]);
     for (let pass = 0; pass < 40; pass++) {
         let moved = false;
-        for (let i = 0; i < info.length; i++) {
-            for (let j = i + 1; j < info.length; j++) {
+        for (let oi = 0; oi < order.length; oi++) {
+            const j = order[oi];
+            for (let oj = 0; oj < oi; oj++) {
+                const i = order[oj];
                 if (info[i].posLy.distanceToSquared(info[j].posLy) < 1e-12) continue;
                 const need = 1.2 * (info[i].ext + info[j].ext);
-                d.subVectors(P[i], P[j]);
-                const len = d.length();
-                if (len >= need) continue;
-                if (len < 1e-9) d.copy(info[i].dir).sub(info[j].dir); else d.divideScalar(len);
-                if (d.lengthSq() < 1e-12) d.set(0, 1, 0);
-                d.normalize().multiplyScalar((need - len) * 0.5 + 1e-3);
-                P[i].add(d);
-                P[j].sub(d);
-                moved = true;
+                const near = R[i] <= R[j] ? i : j, far = near === i ? j : i;
+                // Solve |far·dirF·t − near| = need for the smallest t ≥ R[far]
+                const cosA = info[far].dir.dot(info[near].dir);
+                const rn = R[near];
+                const b = rn * cosA, c = rn * rn - need * need;
+                const disc = b * b - c;
+                if (disc <= 0) continue; // the line never comes that close
+                const tExit = b + Math.sqrt(disc);
+                if (R[far] < tExit && R[far] > b - Math.sqrt(disc)) { R[far] = tExit + 1e-3; moved = true; }
             }
         }
-        // Keep everything clear of the Solar System after the nudges
-        info.forEach((st, i) => {
-            const minR = 1.2 * (systemEdge + st.ext);
-            if (P[i].length() < minR) { P[i].setLength(minR); moved = true; }
-        });
         if (!moved) break;
+        order.sort((a, b) => R[a] - R[b]);
     }
-    return P;
+    return info.map((st, i) => st.dir.clone().multiplyScalar(R[i]));
 }
 
 // Blend two positions seen from the Sun: distance geometric (so a star 10⁶×
@@ -6099,13 +6154,13 @@ function applyScaleTransition() {
     const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; // ease in-out
     const { from, to } = scaleTransition;
     const geo = (a2, b2) => a2 * Math.pow(b2 / a2, e);
-    // Pull-in weight eases between the two; its scale falls back to the other
-    // end's when one side has none (toggling the checkbox)
-    const fromPU = from.starUPulled || to.starUPulled, toPU = to.starUPulled || from.starUPulled;
+    // Pull-in weight eases between the two ends; the pulled arrangement's
+    // scale is recomputed for the in-between Solar System size
+    const midEdge = geo(from.systemEdge ?? to.systemEdge, to.systemEdge);
+    const midBlend = THREE.MathUtils.lerp(from.starBlend || 0, to.starBlend || 0, e);
     const mid = { k: geo(from.k, to.k), planets: new Map(), moons: new Map(), starU: geo(from.starU, to.starU),
-        systemEdge: geo(from.systemEdge ?? to.systemEdge, to.systemEdge),
-        starBlend: THREE.MathUtils.lerp(from.starBlend || 0, to.starBlend || 0, e),
-        starUPulled: fromPU ? geo(fromPU, toPU) : 0 };
+        systemEdge: midEdge, starBlend: midBlend,
+        sv: THREE.MathUtils.lerp(from.sv ?? to.sv, to.sv, e) };
     to.planets.forEach((r, n) => mid.planets.set(n, geo(from.planets.get(n) ?? r, r)));
     to.moons.forEach((r, n) => mid.moons.set(n, geo(from.moons.get(n) ?? r, r)));
     applyLayout(mid);
@@ -6203,6 +6258,345 @@ function setupScaleMenu() {
     document.querySelectorAll('.scale-preset').forEach(b =>
         b.addEventListener('click', () => setScaleValue(SCALE_PRESETS[b.dataset.scale], true)));
     syncScaleMenu();
+}
+
+function setFollowMode(mode) {           // 'off' | 'on' | 'angle'
+    isCameraLocked = mode !== 'off';
+    cameraAngleLock = mode === 'angle';
+    chaseCam.hasOffset = false;          // lock on from the current view next frame
+    document.getElementById('camera-lock-mode').textContent =
+        !isCameraLocked ? 'Off' : cameraAngleLock ? 'On + angle' : 'On';
+}
+
+// ── Cheese Moon tour ──────────────────────────────────────────────────
+// After the wedge is clicked the story plays itself: the camera settles
+// beside the Moon (Earth in view to the right) in chase mode, time races
+// between the story's turning points and slows at each, cuts to Earth for
+// the two heaviest bombardments, and once the last piece has fallen the
+// Moon is put back. A drag or zoom hands the camera back to the user;
+// changing the speed hands back the clock. R ends it at any time.
+const TOUR_FAST = 20 * 86400, TOUR_SLOW = 86400;              // sim-seconds per second
+const TOUR_EARTH = 6 * 3600, TOUR_LOOKBACK = 2 * 86400, TOUR_ISS = 78;   // ISS ride at 1.3 min/s
+const TOUR_EVENTS = [0, 30, 120, 160, 260, 560, 700];         // days after the click
+const TOUR_SHOT_BODY = { moon: 'Moon', lookback: 'Moon', earth: 'Earth' };
+const cheeseTour = { active: false, camera: false, clock: false, shot: null, lastSps: 0, windows: null, finale: null };
+
+function tourSpeed(day) {
+    let slow = 0;
+    for (const e of TOUR_EVENTS) slow = Math.max(slow, Math.exp(-(((day - e) / 4) ** 2)));
+    let lr = Math.log(TOUR_FAST) + (Math.log(TOUR_SLOW) - Math.log(TOUR_FAST)) * slow;
+    for (const w of cheeseTour.windows || []) {
+        const rampIn = w.ramp ?? 2, rampOut = w.rampOut ?? rampIn;   // days to ease in and out
+        const k = THREE.MathUtils.smoothstep(day, w.a - rampIn, w.a) * (1 - THREE.MathUtils.smoothstep(day, w.b, w.b + rampOut));
+        lr += (Math.log(w.sps) - lr) * k;
+    }
+    return Math.exp(lr);
+}
+
+// The busiest stretch of impacts in [from, to]: [start, end] days
+function busiestImpacts(hitDays, from, to, span = 2) {
+    let best = null, bestN = 0;
+    for (const s of hitDays) {
+        if (s < from || s > to) continue;
+        const n = hitDays.filter(h => h >= s && h < s + span).length;
+        if (n > bestN) { bestN = n; best = s; }
+    }
+    return best === null ? null : [best - 1.5, best + span + 0.5];
+}
+
+// One cut away from the Moon when the impacts peak (once the flights are
+// planned): from beside Earth looking back at the broken Moon with the
+// chunks streaming across, then straight on to riding the ISS for ~30 s
+// while big chunks come down around it (Earth instead if the ISS isn't loaded)
+function planTourShots() {
+    const hits = cheeseMoon.hitDays, end = cheeseMoon.endDay;
+    const peak = busiestImpacts(hits, 450, end - 120, 0.25);
+    const a = peak ? peak[0] + 1.45 : 700;
+    cheeseTour.windows = [
+        { a: a - 20, b: a, shot: 'lookback', sps: TOUR_LOOKBACK },
+        { a, b: a + 0.03, shot: 'iss', sps: TOUR_ISS, ramp: 0.05, rampOut: 0.08 }
+    ];
+}
+
+// Big chunks dropped just off the ISS's upcoming ground track, landing a
+// little before it passes, so the ride shows them streak in and strike
+const ISS_PERIOD_S = 5560, EARTH_DAY_S = 86164;
+function scheduleIssShowcase(day) {
+    const iss = celestialBodies.get('ISS')?.mesh, earth = celestialBodies.get('Earth')?.mesh;
+    if (!iss || !earth) return;
+    const RE = earth.userData.visualRadius || 1;
+    const P = iss.position.clone().normalize();                          // Earth's frame
+    const travel = new THREE.Vector3(0, 0, 1).applyQuaternion(iss.quaternion).normalize();
+    const normal = P.clone().cross(travel).normalize();                  // orbit's pole
+    const w = 2 * Math.PI / ISS_PERIOD_S, wE = 2 * Math.PI / EARTH_DAY_S;
+    const list = [5, 10, 15, 20, 25].map((secs, k) => {
+        const t = secs * TOUR_ISS;                                       // sim seconds from now
+        // Where the ISS will be a couple of minutes after the impact (Earth turns under the orbit)
+        const ground = P.clone().applyAxisAngle(normal, w * (t + 150)).applyAxisAngle(_tourUp, -wE * t);
+        const along = normal.clone().applyAxisAngle(_tourUp, -wE * t).cross(ground).normalize();
+        const target = ground.applyAxisAngle(along, (k % 2 ? 1 : -1) * (0.07 + 0.02 * k)).multiplyScalar(RE);
+        const up = target.clone().normalize();
+        const start = target.clone().addScaledVector(up, RE * 0.9).addScaledVector(along, -RE * 0.35);
+        return { day: day + t / 86400, fallDays: 420 / 86400, start, target };
+    });
+    cheeseMoon.showcase(list);
+}
+
+// Where each tour shot puts the camera, from the bodies' current positions:
+//   moon      beside the Moon, Earth off to the right
+//   earth     behind Earth, a little to the side, so the Moon sits just past
+//             Earth's edge with the chunks streaming in between
+//   lookback  beside Earth, looking at the Moon with Earth to the left
+const _tourF = new THREE.Vector3(), _tourO = new THREE.Vector3(), _tourUp = new THREE.Vector3(0, 1, 0);
+function tourShotPose(shot) {
+    const earth = celestialBodies.get('Earth'), moon = celestialBodies.get('Moon');
+    const E = earth.mesh.getWorldPosition(new THREE.Vector3()), M = moon.mesh.getWorldPosition(new THREE.Vector3());
+    const RE = earth.mesh.userData.visualRadius || 1, RM = moon.mesh.userData.visualRadius || 0.35;
+    const toMoon = M.clone().sub(E).normalize();
+    const side = toMoon.clone().cross(_tourUp).normalize();
+    if (shot === 'lookback') {
+        // Off to the side of the Earth–Moon line: the Moon in the middle,
+        // Earth ~20° to its left, the chunks crossing the gap between
+        let best = null;
+        for (const sgn of [1, -1]) {
+            const pos = E.clone().addScaledVector(toMoon, -RE * 6).addScaledVector(side, sgn * RE * 3.5).addScaledVector(_tourUp, RE * 0.8);
+            const right = M.clone().sub(pos).cross(_tourUp);
+            const score = -E.clone().sub(pos).dot(right);                // Earth on the left
+            if (!best || score > best.score) best = { pos, score };
+        }
+        return { pos: best.pos, target: M };
+    }
+    if (shot === 'earth') {
+        return { pos: E.clone().addScaledVector(toMoon, -RE * 5).addScaledVector(side, RE * 2).addScaledVector(_tourUp, RE), target: E };
+    }
+    const [F, O, dist, sideAngle, elevation] = [M, E, RM * 8, 0.52, 0.2];
+    const away = F.clone().sub(O).normalize();          // from the other body, through the focus
+    let best = null;
+    for (const a of [sideAngle, -sideAngle]) {
+        const dir = away.clone().applyAxisAngle(_tourUp, a).addScaledVector(_tourUp, Math.tan(elevation)).normalize();
+        const cam = F.clone().addScaledVector(dir, dist);
+        const score = O.clone().sub(cam).dot(F.clone().sub(cam).cross(_tourUp));
+        if (!best || score > best.score) best = { cam, score };
+    }
+    return { pos: best.cam, target: F };
+}
+
+// Smooth moves between shots: the camera swings round the body it's heading
+// for (direction turned along a great circle, distance blended
+// geometrically), tracking it the whole way even while time races; applied
+// after the follow code each frame. At the end the follow mode locks on
+// from exactly there, so nothing jumps
+let tourGlide = null;
+function startTourGlide(shot, ms) {
+    const name = TOUR_SHOT_BODY[shot], body = celestialBodies.get(name);
+    if (!body) return;
+    body.mesh.getWorldPosition(_tourF);
+    tourGlide = {
+        shot, name, start: performance.now(), ms,
+        fromOff: camera.position.clone().sub(_tourF),
+        fromTarget: controls.target.clone().sub(_tourF),
+        fromUp: camera.up.clone()
+    };
+    flyToAnimation = null;
+    focusRetarget = null;
+    earthSpotFlight = null;
+    if (currentFocusedBody !== name) {
+        currentFocusedBody = name;
+        updateSidebarSelection(name);
+        showBodyInfo(body.data);
+    }
+    cameraOffsetFromTarget = null;
+    setFollowMode('on');
+    controls.minDistance = 1e-6;
+}
+
+function applyTourGlide() {
+    const g = tourGlide;
+    if (!g) {
+        // Earth shot: keep re-framing as the Moon moves round (Earth spins,
+        // so an Earth-locked angle wouldn't hold the Moon in view)
+        if (cheeseTour.active && cheeseTour.camera && cheeseTour.shot === 'earth' && !cheeseTour.finale) {
+            const pose = tourShotPose('earth');
+            camera.position.copy(pose.pos);
+            controls.target.copy(pose.target);
+        }
+        return;
+    }
+    const t = Math.min(1, (performance.now() - g.start) / g.ms);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const body = celestialBodies.get(g.name);
+    body.mesh.getWorldPosition(_tourF);
+    const pose = tourShotPose(g.shot);
+    const toOff = pose.pos.sub(_tourF);
+    const d0 = g.fromOff.clone().normalize(), d1 = toOff.clone().normalize();
+    const axis = d0.clone().cross(d1);
+    if (axis.lengthSq() < 1e-10) axis.copy(_tourUp);
+    const dir = d0.applyAxisAngle(axis.normalize(), d0.angleTo(d1) * e);
+    const len = Math.pow(g.fromOff.length(), 1 - e) * Math.pow(toOff.length(), e);
+    camera.position.copy(_tourF).addScaledVector(dir, len);
+    controls.target.copy(_tourF).add(g.fromTarget).lerp(pose.target, e);
+    camera.up.copy(g.fromUp).lerp(_tourUp, e).normalize();
+    if (t >= 1) {
+        tourGlide = null;
+        cheeseTour.shot = g.shot;
+        controls.minDistance = (body.mesh.userData.visualRadius || 1) * 1.4;
+        setFollowMode(g.shot === 'earth' ? 'on' : 'angle');   // Moon-locked shots hold as it goes round
+    }
+}
+
+function startCheeseTour() {
+    Object.assign(cheeseTour, {
+        active: true, camera: true, clock: true, shot: null, windows: null, finale: null, issTry: null, issFlight: false
+    });
+    startTourGlide('moon', 6000);
+    setSimRateSps(tourSpeed(0));
+    cheeseTour.lastSps = currentSimSps();
+}
+
+function stopCheeseTour() {
+    Object.assign(cheeseTour, { active: false, camera: false, clock: false, finale: null, issFlight: false });
+    tourGlide = null;
+}
+
+// Put the Moon back. R also returns to the present at the normal speed; when
+// the story finishes by itself the clock is already at today, and the view
+// (riding the ISS) and speed carry on as they are
+function endCheeseMoon(finished) {
+    stopCheeseTour();
+    const wasActive = cheeseMoon?.active;
+    cheeseMoon?.reset();
+    if (finished && wasActive) {
+        cheeseMoon.say('And just like that, the Moon is back.', false);
+        return;
+    }
+    document.getElementById('tl-goto-now')?.click();
+    setSimRateSps(DEFAULT_SIM_SPS);
+}
+
+// Finale, once everything has come down: bring the clock back to today
+// (aftermath kept), glide down over Earth's day side and let the ground turn
+// past, then ride along with the ISS over the craters, then put the Moon back
+const FINALE = { flyMs: 6500, turnUntil: 24, issFor: 26, turnRate: 0.035 };   // s, rad/s
+function startCheeseFinale(day) {
+    cheeseTour.finale = { start: performance.now(), last: performance.now(), step: 'aim', frames: 0, issStart: 0, issLocked: false };
+    tourGlide = null;
+    cheeseTour.clock = false;
+    document.getElementById('tl-goto-now')?.click();
+    cheeseMoon.rebase(simDate.getTime(), day);
+    setSimRateSps(600);                                  // 10 min/s: Earth turns slowly
+}
+
+// Aim a little north and west of the point under the Sun, so the ground
+// turns into the light (a couple of frames after the date jump, once Earth
+// has been turned to today's orientation)
+function flyFinaleToEarth() {
+    const earth = celestialBodies.get('Earth');
+    if (!earth || !cheeseTour.camera) return;
+    setFollowMode('on');
+    earth.mesh.getWorldPosition(_tourF);
+    const q = earth.mesh.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const spot = _tourF.clone().negate().normalize().applyQuaternion(q);
+    spot.applyAxisAngle(_tourUp, -0.35).add(new THREE.Vector3(0, 0.45, 0)).normalize();
+    flyToEarthSpot(spot, FINALE.flyMs, 3500);
+}
+
+function updateCheeseFinale() {
+    const f = cheeseTour.finale;
+    const now = performance.now(), t = (now - f.start) / 1000, dt = Math.min(0.1, (now - f.last) / 1000);
+    f.last = now;
+    const earth = celestialBodies.get('Earth'), iss = celestialBodies.get('ISS');
+    if (f.step === 'aim' && ++f.frames > 2) {
+        flyFinaleToEarth();
+        f.step = 'fly';
+        f.start = now;
+    }
+    if (f.step === 'fly' && t > FINALE.flyMs / 1000 + 0.3) f.step = 'turn';
+    if (f.step === 'turn') {
+        // The close-up camera rides Earth's spin; swing it back a little each
+        // frame so the ground slides past underneath
+        if (cheeseTour.camera && earth && currentFocusedBody === 'Earth') {
+            earth.mesh.getWorldPosition(_tourF);
+            const axis = _tourO.set(0, 1, 0).applyQuaternion(earth.mesh.getWorldQuaternion(new THREE.Quaternion()));
+            camera.position.sub(_tourF).applyAxisAngle(axis, -FINALE.turnRate * dt).add(_tourF);
+            camera.up.applyAxisAngle(axis, -FINALE.turnRate * dt);
+        }
+        if (t > FINALE.turnUntil) {
+            if (iss?.mesh.visible) {
+                f.step = 'iss';
+                f.issStart = t;
+                setSimRateSps(60);
+                if (cheeseTour.camera) focusOnBody('ISS');
+            } else {
+                f.step = 'done';
+            }
+        }
+    }
+    if (f.step === 'iss') {
+        if (cheeseTour.camera && !f.issLocked && !flyToAnimation && !focusRetarget) {
+            setFollowMode('angle');                      // ride along, Earth turning below
+            f.issLocked = true;
+        }
+        if (t > f.issStart + FINALE.issFor) f.step = 'done';
+    }
+    if (f.step === 'done') endCheeseMoon(true);
+}
+
+function updateCheeseTour() {
+    if (!cheeseMoon?.active) { if (cheeseTour.active) stopCheeseTour(); return; }
+    if (cheeseTour.finale) { updateCheeseFinale(); return; }
+    const day = (simDate.getTime() - cheeseMoon.triggeredAt) / MS_PER_DAY;
+    if (cheeseMoon.ready && day > cheeseMoon.endDay + 3 && cheeseTour.active && cheeseTour.camera && viewMode === 'map') {
+        startCheeseFinale(day);
+        return;
+    }
+    if (cheeseMoon.ready && day > cheeseMoon.endDay + 20) { endCheeseMoon(true); return; }   // all fallen
+    if (!cheeseTour.active || viewMode !== 'map') return;
+    if (!cheeseTour.windows && cheeseMoon.ready) planTourShots();
+    if (cheeseTour.camera && !tourGlide) {
+        const windows = cheeseTour.windows || [];
+        const issWin = windows.find(w => w.shot === 'iss');
+        // The ISS ride is short: one fast frame can step right over it, so
+        // once its start has passed it always plays, from its start
+        let want = issWin && !issWin.started && day >= issWin.a ? 'iss'
+            : windows.find(w => day >= w.a && day < w.b)?.shot || 'moon';
+        if (want === 'iss' && cheeseTour.shot !== 'iss' && !cheeseTour.issFlight) {
+            if (!cheeseTour.issTry) {
+                cheeseTour.issTry = { frames: 0 };
+                issWin.started = true;
+                // ISS positions only exist near today: bring the clock back to
+                // today (story kept), and the story back to the ride's start
+                document.getElementById('tl-goto-now')?.click();
+                cheeseMoon.rebase(simDate.getTime(), Math.min(day, issWin.a + 0.01));
+            }
+            if (celestialBodies.get('ISS')?.mesh.visible) {
+                cheeseTour.issFlight = true;
+                setFollowMode('on');
+                focusOnBody('ISS');
+            } else {
+                want = ++cheeseTour.issTry.frames < 30 ? cheeseTour.shot : 'earth';   // give it a moment to appear
+            }
+        }
+        if (cheeseTour.issFlight) {
+            if (!flyToAnimation && !focusRetarget) {
+                cheeseTour.issFlight = false;
+                cheeseTour.shot = 'iss';
+                setFollowMode('angle');             // ride along, Earth turning below
+                scheduleIssShowcase(day);
+            }
+        } else if (want !== cheeseTour.shot && want !== 'iss') {
+            startTourGlide(want, 4500);
+        }
+    }
+    if (cheeseTour.clock) {
+        const now = currentSimSps();
+        if (Math.abs(now - cheeseTour.lastSps) > Math.abs(cheeseTour.lastSps) * 0.01 + 1) {
+            cheeseTour.clock = false;                 // the user changed the speed
+        } else {
+            const sps = tourSpeed(day);
+            if (Math.abs(sps - now) > now * 0.02) setSimRateSps(sps);
+            cheeseTour.lastSps = currentSimSps();
+        }
+    }
 }
 
 function toggleCameraLock() {

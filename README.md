@@ -97,8 +97,9 @@ no framework, no account.
 | Time speed | A / D keys, scroll over the time panel, − / + buttons, presets | Buttons and presets |
 | Spread out / compress distances | W / S, or the Scale slider | Scale slider |
 | Hide / show orbit lines | Q | – |
-| Fly to Earth / the ISS | E / I | – |
+| Fly to Earth / the Moon / the ISS | E / M / I | – |
 | Desktop globe mode | G, or the Globe button | Globe button |
+| Back to the present time | R, or the Now button | Now button |
 | Hide / show the interface | H | – |
 
 On phones, a bottom bar opens the object list, time controls and settings.
@@ -143,7 +144,7 @@ bump it when the CSS changes.
 | What | Source | License |
 |---|---|---|
 | Planet, Moon and Earth maps | [Solar System Scope](https://www.solarsystemscope.com/textures/), based on NASA data | CC BY 4.0 |
-| ISS 3D model | [NASA 3D Resources](https://github.com/nasa/NASA-3D-Resources) | Public domain |
+| ISS 3D models | [NASA 3D Resources](https://github.com/nasa/NASA-3D-Resources) (distant view); [NASA VTAD textured model](https://science.nasa.gov/resource/international-space-station-3d-model/) (close-up, compressed with glTF-Transform) | Public domain |
 | ISS orbit | [Where the ISS at?](https://wheretheiss.at/) API | Free public API |
 | Satellite orbits | [CelesTrak](https://celestrak.org/) | Free public data |
 | Orbit propagation | [satellite.js](https://github.com/shashwatak/satellite-js) (SGP4) | MIT |
