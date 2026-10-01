@@ -62,8 +62,9 @@ no framework, no account.
   all the way around the planet. Drag to a new angle and it locks on there.
 - **Roll and level.** Ctrl + drag rolls the view; the compass puts north back up and
   the level-horizon button lines up with the ISS's own "up".
-- **Smooth hand-offs.** Following the ISS, click Earth (or Shift-drag) to switch
-  focus without the camera moving, then scroll straight down into it.
+- **Smooth hand-offs.** Following the ISS, click Earth to switch focus without
+  the camera moving, then scroll straight down into it. Panning (Shift-drag or
+  right-drag) shifts the framing and keeps riding along with the station.
 - **Scale changes as a shot.** Switching between compressed and realistic scale
   slides every planet and moon to its new distance while the camera holds still.
 

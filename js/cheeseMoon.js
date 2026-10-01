@@ -170,7 +170,11 @@ function shardGeometry(rand) {
         const d = new THREE.Vector3(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize();
         pts.push(d.multiplyScalar(0.6 + rand() * 0.5).multiply(stretch));
     }
-    return sphericalUVs(new ConvexGeometry(pts), true, 2.5);   // denser holes: they read at small size
+    try {
+        return sphericalUVs(new ConvexGeometry(pts), true, 2.5);   // denser holes: they read at small size
+    } catch (err) {
+        return sphericalUVs(new THREE.IcosahedronGeometry(0.8, 0), true, 2.5);
+    }
 }
 
 function cheeseTexture() {
@@ -326,7 +330,11 @@ export function initCheeseMoon({ moonMesh, earthMesh, moonData, scene, setNightL
     // Where it will split: seed directions of a spherical Voronoi partition.
     // The same seeds drive the glowing cracks and the fragments' shapes, so
     // it breaks exactly along the cracks.
-    const SEEDS = Array.from({ length: FRAGMENTS }, () => new THREE.Vector3().randomDirection());
+    // Seeded, so the Moon breaks the same way every time (and the layout is known to build)
+    const SEEDS = Array.from({ length: FRAGMENTS }, () => {
+        const z = rand() * 2 - 1, a = rand() * Math.PI * 2, r = Math.sqrt(1 - z * z);
+        return new THREE.Vector3(r * Math.cos(a), z, r * Math.sin(a));
+    });
 
     // Heat + crack glow, shared by the whole body and its fragments
     const heat = { uHeat: { value: 0 }, uCrack: { value: 0 }, uSeeds: { value: SEEDS } };
@@ -387,9 +395,24 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
     const fragGroup = new THREE.Group();
     fragGroup.visible = false;
     cheese.add(fragGroup);
-    cells.forEach((pts, k) => {
-        if (pts.length < 5) return;
-        const geo = sphericalUVs(new ConvexGeometry(pts));
+    cells.forEach((cellPts, k) => {
+        // The icosphere repeats each vertex in every triangle that uses it, so
+        // de-duplicate: a small cell can be only a couple of distinct points,
+        // and a hull of those throws (which stopped the whole app loading)
+        const seen = new Set();
+        const pts = cellPts.filter(v => {
+            const key = `${v.x.toFixed(5)},${v.y.toFixed(5)},${v.z.toFixed(5)}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        });
+        if (pts.length < 6) return;
+        let geo;
+        try {
+            geo = sphericalUVs(new ConvexGeometry(pts));
+        } catch (err) {
+            return;                                   // skip a piece that can't be built
+        }
         geo.scale(R * 1.003, R * 1.003, R * 1.003);
         geo.computeBoundingBox();
         const centre = geo.boundingBox.getCenter(new THREE.Vector3());

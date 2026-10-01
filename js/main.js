@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=192';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=192';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=203';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=203';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=192';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=192';
-import { initCheeseMoon } from './cheeseMoon.js?v=192';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=192';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=192';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=192';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=192';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=203';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=203';
+import { initCheeseMoon } from './cheeseMoon.js?v=203';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=203';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=203';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=203';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=203';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=192';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=192';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=203';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=203';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -911,6 +911,24 @@ let isCameraLocked = true; // Default: camera moves with object
 let cameraAngleLock = false;
 const chaseCam = { active: false, bodyName: null, offsetLocal: new THREE.Vector3(), upLocal: new THREE.Vector3(0, 1, 0), targetOffsetLocal: new THREE.Vector3(), hasOffset: false };
 const _chaseQuat = new THREE.Quaternion();
+// Panning while following a satellite (the ISS) shifts the view and keeps the
+// shift riding along with it: OrbitControls applies the pan inside
+// controls.update(), and the difference from the target the follow code set is
+// kept as an offset (in the object's frame for "On + angle", else in world)
+// (Scroll zoom runs controls.update() inside the wheel handler, between
+// frames, so changes since the end of the last frame are picked up too)
+const satPan = { offset: new THREE.Vector3(), setTarget: new THREE.Vector3(), endTarget: new THREE.Vector3(), body: null, valid: false, endValid: false };
+const _satPanDelta = new THREE.Vector3();
+function addSatPanDelta(body, delta) {
+    if (!body || delta.lengthSq() < 1e-16) return;
+    // (by the mode, not chaseCam.active: that's cleared at the top of each frame)
+    if (isCameraLocked && cameraAngleLock) {
+        body.mesh.getWorldQuaternion(_chaseQuat).invert();
+        chaseCam.targetOffsetLocal.add(delta.applyQuaternion(_chaseQuat));
+    } else {
+        satPan.offset.add(delta);
+    }
+}
 const _chaseVec = new THREE.Vector3();
 const _chaseSph = new THREE.Spherical();
 const _targetVec = new THREE.Vector3();
@@ -1439,12 +1457,18 @@ function init() {
     setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
     // Dwarf planets, asteroid, comet, interstellar objects, spacecraft
     initSmallBodies(scene).forEach(sb => celestialBodies.set(sb.name, { mesh: sb.mesh, data: sb.data, type: 'smallbody' }));
-    // Easter egg: a wedge of cheddar at the Moon's south pole
-    cheeseMoon = initCheeseMoon({
-        moonMesh: celestialBodies.get('Moon')?.mesh, earthMesh: celestialBodies.get('Earth')?.mesh,
-        moonData: celestialBodies.get('Moon')?.data, scene,
-        setNightLights: k => { nightLightsScale = k; }
-    });
+    // Easter egg: a wedge of cheddar at the Moon's south pole. Never allowed to
+    // stop the app loading
+    try {
+        cheeseMoon = initCheeseMoon({
+            moonMesh: celestialBodies.get('Moon')?.mesh, earthMesh: celestialBodies.get('Earth')?.mesh,
+            moonData: celestialBodies.get('Moon')?.data, scene,
+            setNightLights: k => { nightLightsScale = k; }
+        });
+    } catch (err) {
+        console.warn('Easter egg unavailable:', err);
+        cheeseMoon = null;
+    }
     setupStellarReferenceMeshes();
     createStarField();
 
@@ -3857,6 +3881,9 @@ function animate() {
     
     // Camera follow behavior
     chaseCam.active = false;
+    // Flights move the look-at point too; they're not pans. Without this the
+    // first frame after flying to the ISS counted the whole trip as one
+    if (flyToAnimation || focusRetarget || earthSpotFlight || tourGlide) satPan.endValid = false;
     if (currentFocusedBody && !flyToAnimation && !isHoverPanning) {
         // Determine which body map to use based on view mode
         let body;
@@ -3875,6 +3902,12 @@ function animate() {
         if (body && body.mesh) {
             body.mesh.getWorldPosition(_animWorldPosition);
             
+            // Look-at moves made between frames (scroll zoom toward the cursor)
+            // while following a spacecraft: keep them as part of its offset
+            if (body.type === 'satellite' && satPan.endValid && satPan.body === currentFocusedBody && !flyToAnimation) {
+                addSatPanDelta(body, _satPanDelta.copy(controls.target).sub(satPan.endTarget));
+            }
+            satPan.endValid = false;
             // Get current camera offset from target (spherical coords)
             _animCameraOffset.copy(camera.position).sub(controls.target);
             // Close to Earth, ride along with its spin so the ground stays put
@@ -3946,13 +3979,22 @@ function animate() {
                 // otherwise Earth orbits/spins out from under the camera and the
                 // spot you flew down to slides away.
                 controls.target.copy(_animWorldPosition);
-                camera.position.copy(_animWorldPosition).add(_animCameraOffset);
+                if (body.type === 'satellite') controls.target.add(satPan.offset);
+                camera.position.copy(controls.target).add(_animCameraOffset);
             } else {
                 // Camera lock is OFF - camera stays in space, just pans to follow
                 // Only update target position, camera stays where it is
                 // This makes the camera rotate to track the object
                 controls.target.copy(_animWorldPosition);
+                if (body.type === 'satellite') controls.target.add(satPan.offset);
                 cameraOffsetFromTarget = null;
+            }
+            // Remember where the follow code put the look-at point, to pick up pans
+            if (body.type === 'satellite' && !flyToAnimation && !focusRetarget) {
+                if (satPan.body !== currentFocusedBody) satPan.offset.set(0, 0, 0);
+                satPan.body = currentFocusedBody;
+                satPan.setTarget.copy(controls.target);
+                satPan.valid = true;
             }
         }
     }
@@ -3983,9 +4025,19 @@ function animate() {
     if (!customOrbit) chaseDrag.dTheta = chaseDrag.dPhi = 0;
 
     applyTourGlide();
+    // Following a spacecraft, scroll zooms toward what's under the cursor: the
+    // look-at point floats beside the model (so the horizon shows), and zooming
+    // on it flew past the station. The shift it makes is kept by satPan
+    controls.zoomToCursor = viewMode === 'map' && celestialBodies.get(currentFocusedBody)?.type === 'satellite';
     prepareEarthSurfaceCamera();
     controls.update();
     finishEarthSurfaceCamera();
+    if (satPan.valid && satPan.body === currentFocusedBody && !tourGlide) {
+        addSatPanDelta(celestialBodies.get(currentFocusedBody), _satPanDelta.copy(controls.target).sub(satPan.setTarget));
+        satPan.endTarget.copy(controls.target);
+        satPan.endValid = true;
+    }
+    satPan.valid = false;
     updateNearPlaneForFocus();
 
     // Chase cam: drags/zooms this frame become the new locked viewpoint
@@ -4163,6 +4215,8 @@ function finishEarthSurfaceCamera() {
 function focusOnBody(name) {
     const body = celestialBodies.get(name);
     if (!body) return;
+    satPan.offset.set(0, 0, 0);
+    satPan.endValid = false;
     earthSpotFlight = null;
     // A new selection starts fresh: otherwise "On + angle" restores the
     // viewpoint it last locked for this body, undoing the north-up framing
@@ -4349,6 +4403,9 @@ function focusOnBody(name) {
     // and block zooming (OrbitControls enforces minDistance every frame).
     controls.minDistance = Math.max(ownRadius * 1.4, camera.near * 2.5);
     if (tinyBody) controls.minDistance = ownRadius * 1.3; // until it nearly fills the view
+    // Spacecraft models: right up to the hardware (pan onto a part, then zoom),
+    // a metre or two at the model's scale; the near plane shrinks to match
+    if (body.type === 'satellite') controls.minDistance = ownRadius * 0.01;
     
     // Calculate target camera position
     let offset;
@@ -5505,19 +5562,10 @@ function onMouseDown(event) {
     // We must release the focus to allow panning, otherwise animate() will tick the target back to the body
     const isPanning = event.shiftKey || event.button === 1 || event.button === 2;
 
-    // Following a satellite (the ISS): a pan gesture hands focus to the planet
-    // it orbits, in place, so scrolling then zooms down into the planet. The
-    // drag itself is swallowed (pan would fight the new follow target).
+    // Following a satellite (the ISS): a pan just shifts the view and stays
+    // locked on (see satPan); unfollowing would leave it behind in a second
     const focused = currentFocusedBody && celestialBodies.get(currentFocusedBody);
-    if (isPanning && viewMode === 'map' && focused?.type === 'satellite' && focused.parent) {
-        const planet = [...celestialBodies].find(([, b]) => b.mesh === focused.parent);
-        if (planet) {
-            retargetFocus(planet[0]);
-            controls.enablePan = false;
-            window.addEventListener('pointerup', () => { controls.enablePan = true; }, { once: true });
-            return;
-        }
-    }
+    if (isPanning && viewMode === 'map' && focused?.type === 'satellite') return;
 
     if (isPanning && (isCameraLocked || currentFocusedBody)) {
         if (isCameraLocked) {
