@@ -47,7 +47,9 @@ no framework, no account.
   shown with NASA's 3D model and a trail of the last 45 minutes. Pick it from the
   object list and the camera rides along with it.
 - **Satellites.** Space stations, the GPS constellation, the geostationary belt,
-  and optionally all ~10,000 Starlink satellites, from CelesTrak's public catalogue
+  and optionally all ~10,000 Starlink satellites, from CelesTrak's public catalogue.
+  They start hidden and show themselves briefly the first time you come close
+  to Earth; the Satellites button turns them on for good
 - **Day and night.** An 8K Earth with city lights that come on along the terminator
 - **Satellite view.** Keep scrolling into Earth to go from orbit to street level,
   with high-resolution imagery streaming in as you descend. Scrolling zooms toward
@@ -79,6 +81,13 @@ no framework, no account.
   follow the clock.
 
 ### Go beyond
+- Dwarf planets, Halley's Comet, interstellar visitors and the Voyager and New
+  Horizons probes, at their real positions. Comets grow a glowing coma and two
+  tails as they near the Sun: a straight blue gas tail pointing away from it and
+  a curved dust tail
+- **Hover magnifier.** Rest the cursor on a distant planet, star or black hole
+  for a second and a scope opens beside it with a live close-up, so you can see
+  what it is without flying there (sunlit worlds are shown from their day side)
 - A real night sky of about 9,000 naked-eye stars, with constellation lines and labels
 - Nearby stars, exoplanet systems and black holes. Black holes are ray-traced
   in the browser: light bends around them, so the far side of the accretion
@@ -96,6 +105,7 @@ no framework, no account.
 | Roll the view | Ctrl + drag | – |
 | North up / level horizon | Compass and horizon buttons (top left) | Same buttons |
 | Select / fly to | Click an object or pick it from the side panel | Tap |
+| Magnify a distant object | Rest the cursor on it for a second | – |
 | Play / pause | Space, or the play button | Play button |
 | Time speed | A / D keys, scroll over the time panel, − / + buttons, presets | Buttons and presets |
 | Spread out / compress distances | W / S, or the Scale slider | Scale slider |

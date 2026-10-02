@@ -34,6 +34,10 @@ let sat = null;
 const groups = new Map(); // key → { cfg, satrecs, points, cursor, loading }
 let root = null;
 let mode = 'On';
+// 0..1: show the standard groups (not Starlink, which stays opt-in) at this
+// fade, whatever the mode, for the one-time "here are the satellites" moment
+// main.js plays near Earth
+let preview = 0;
 
 let statusListener = null;
 // fn(problems): called with a list of human-readable problems ([] when all OK)
@@ -121,6 +125,26 @@ export function setSatelliteMode(next) {
     }
 }
 
+export function setSatellitePreview(alpha) {
+    preview = alpha;
+    if (alpha > 0) for (const cfg of GROUPS) if (!cfg.optional && !groups.has(cfg.key)) loadGroup(cfg);
+    // Download problems from the preview (e.g. CelesTrak's limit on Starlink)
+    // shouldn't leave a warning on a setting the user never turned on
+    if (alpha === 0) {
+        for (const cfg of GROUPS) {
+            const byMode = mode !== 'Off' && (!cfg.optional || mode === 'On + Starlink');
+            if (!byMode) reportProblem(cfg.label, null);
+        }
+    }
+}
+// The standard groups downloaded and positioned once (failed ones don't count)
+export function satellitesReady() {
+    return GROUPS.filter(cfg => !cfg.optional).every(cfg => {
+        const g = groups.get(cfg.key);
+        return !g || (!g.loading && (!g.points || g.fullPass));
+    }) && GROUPS.some(cfg => groups.has(cfg.key));
+}
+
 export function satelliteCounts() {
     return Object.fromEntries([...groups].map(([k, g]) => [k, g.satrecs.length]));
 }
@@ -135,7 +159,7 @@ export function updateSatellites(earthMesh, simDate, visible = true) {
         groups.forEach(g => g.points && root.add(g.points));
     }
     if (root.parent !== earthMesh) earthMesh.add(root);
-    root.visible = visible && mode !== 'Off';
+    root.visible = visible && (mode !== 'Off' || preview > 0);
     if (!root.visible || !sat) return;
 
     const k = (earthMesh.userData.visualRadius || 1) / EARTH_RADIUS_KM;
@@ -146,8 +170,10 @@ export function updateSatellites(earthMesh, simDate, visible = true) {
 
     for (const g of groups.values()) {
         if (!g.points) continue;
-        const wanted = !g.cfg.optional || mode === 'On + Starlink';
+        const byMode = mode !== 'Off' && (!g.cfg.optional || mode === 'On + Starlink');
+        const wanted = byMode || (preview > 0 && !g.cfg.optional);
         g.points.visible = wanted && g.fullPass;
+        g.points.material.opacity = 0.9 * (byMode ? 1 : preview);
         if (!wanted || budget <= 0) continue;
 
         const arr = g.points.geometry.attributes.position.array;

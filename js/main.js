@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=205';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=205';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=223';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=223';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=205';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=205';
-import { initCheeseMoon } from './cheeseMoon.js?v=205';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=205';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=205';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=205';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=205';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=223';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=223';
+import { initCheeseMoon } from './cheeseMoon.js?v=223';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=223';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=223';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=223';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=223';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=205';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=205';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=223';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=223';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -739,6 +739,11 @@ const DEFAULT_SIM_SPS = 2560;
 // Riding along with the ISS, Earth turning below at the default speed is
 // jarring; picking it slows the clock to this (never speeds it up)
 const ISS_VIEW_SPS = 120;   // 2 min/s
+// The ISS view, in the station's frame (+Z travel, +Y away from Earth, +X
+// truss): camera above and behind, looking a little above and ahead of it so
+// the ISS sits low in the frame with Earth's horizon behind
+const ISS_CAM_OFFSET = new THREE.Vector3(0, 0.04, -0.11);
+const ISS_TARGET_OFFSET = new THREE.Vector3(0, 0.015, 0.01);
 let lastFrameTime = Date.now();     // For delta-time calculations
 let lastTimelineDisplayMinute = null;
 let realisticMoonPositionsDirty = true;
@@ -1455,7 +1460,7 @@ function init() {
     detectUserLocation();
     initMoonShadows();
     initISS();
-    setSatelliteMode(SATELLITE_MODES[0]);
+    setSatelliteMode('Off');   // shown briefly the first time you come near Earth (updateSatelliteIntro)
     createNearbyStars();
     setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
     // Dwarf planets, asteroid, comet, interstellar objects, spacecraft
@@ -1494,6 +1499,7 @@ function init() {
     
     // Initialize raycaster for hover detection
     raycaster = new THREE.Raycaster();
+    setupMagnifier();
     mouse = new THREE.Vector2();
     
     // UI
@@ -1547,6 +1553,7 @@ function init() {
         const next = SATELLITE_MODES[(SATELLITE_MODES.indexOf(label.textContent) + 1) % SATELLITE_MODES.length];
         label.textContent = next;
         setSatelliteMode(next);
+        endSatelliteIntro();                     // the user's choice from here on
     });
     setupPopupMenus();
     setupScaleMenu();
@@ -2115,6 +2122,8 @@ function createDistantObjectMesh(data) {
         visual.getObjectByName('blackHolePick').userData.name = data.name;
         group.add(visual);
         group.userData.visualRadius = visualRadius;
+        // Hover magnifier frames the glowing disk, not just the black shadow
+        group.userData.previewRadius = visualRadius * BLACK_HOLE_REACH;
 
     } else if (data.type === 'neutronstar') {
         // Neutron star - small, bright, with pulse effect
@@ -3535,7 +3544,7 @@ function animate() {
     updateConstellationIntro();
     refreshAUAnchors();
     updateOrbitLineShapes();
-    updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies);
+    updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies, camera);
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
@@ -3621,6 +3630,7 @@ function animate() {
     cheeseMoon?.update(simDate, viewMode === 'map');
     updateCheeseTour();
     updateWeather(celestialBodies.get('Earth')?.mesh, camera, simDate, viewMode === 'map');
+    updateSatelliteIntro();
     updateSatellites(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
 
     // Headlight for size comparison: light objects from the camera's viewpoint
@@ -4078,7 +4088,211 @@ function animate() {
     
     updateEarthNightUniforms();
     updateEarthTiles(celestialBodies.get('Earth')?.mesh, camera, renderer, viewMode === 'map');
+    // Magnifier first: the main render then clears the whole canvas, so the
+    // close-up doesn't linger in the canvas behind the scope's round frame
+    renderMagnifier();
     renderer.render(scene, camera);
+}
+
+// ── Satellites intro ─────────────────────────────────────────────────────
+// Satellites start off. The first time the camera comes near Earth (clicking
+// it, the E key or zooming in) the standard groups (stations, GPS,
+// geostationary; Starlink stays opt-in) fade in for a few seconds and out
+// again, so you know they're there without having to turn them off. Data is
+// fetched first, then the fade plays. Once per visit; touching the Satellites
+// button cancels it
+const SAT_INTRO = { nearRadii: 20, fadeIn: 2500, hold: 2500, fadeOut: 3000, prepTimeout: 9000 };
+const satIntro = { state: 'waiting', t0: 0 };
+function endSatelliteIntro() {
+    if (satIntro.state === 'done') return;
+    satIntro.state = 'done';
+    setSatellitePreview(0);
+}
+function updateSatelliteIntro() {
+    if (satIntro.state === 'done' || viewMode !== 'map') return;
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return;
+    const now = performance.now();
+    if (satIntro.state === 'waiting') {
+        earth.mesh.getWorldPosition(_magPos);
+        if (camera.position.distanceTo(_magPos) > (earth.mesh.userData.visualRadius || 1) * SAT_INTRO.nearRadii) return;
+        satIntro.state = 'preparing';
+        satIntro.t0 = now;
+        setSatellitePreview(1e-4);                   // fetch and position everything, invisibly
+    }
+    if (satIntro.state === 'preparing') {
+        if (!satellitesReady() && now - satIntro.t0 < SAT_INTRO.prepTimeout) return;
+        satIntro.state = 'running';
+        satIntro.t0 = now;
+    }
+    const t = now - satIntro.t0, { fadeIn, hold, fadeOut } = SAT_INTRO;
+    if (t >= fadeIn + hold + fadeOut) { endSatelliteIntro(); return; }
+    const a = t < fadeIn ? THREE.MathUtils.smoothstep(t, 0, fadeIn)
+        : t < fadeIn + hold ? 1
+        : 1 - THREE.MathUtils.smoothstep(t, fadeIn + hold, fadeIn + hold + fadeOut);
+    setSatellitePreview(Math.max(a, 1e-4));
+}
+
+// ── Hover magnifier ──────────────────────────────────────────────────────
+// Point at a dot far off in space and a scope opens beside the cursor with a
+// live close-up of it, seen from the same direction as the main view, so you
+// can tell what it is without flying there. A second camera is put close to
+// the object along the line of sight and the scene is drawn again into a
+// small square of the same canvas (scissored); an HTML frame on top rounds
+// it into a circle with a reticle, the name and the magnification.
+const MAGNIFIER_PX = 380;            // CSS px (must match #magnifier in styles.css)
+const MAGNIFIER_FILL = 0.5;          // share of the scope's width the object spans
+const MAGNIFIER_DELAY_MS = 1000;     // rest the cursor on it this long
+const MAGNIFIER_MAX_RADIUS_PX = 30;  // for things that look small (far-off planets, stars, black holes…)
+const magnifier = { cam: new THREE.PerspectiveCamera(20, 1, 1e-6, 1e12), el: null, nameEl: null, zoomEl: null, body: null, since: 0 };
+// (isDragging stays true after any mouse travel since the last press, so
+// check for a held button instead)
+let mouseButtonsHeld = 0;
+const _magPos = new THREE.Vector3(), _magDir = new THREE.Vector3(), _magViewport = new THREE.Vector4();
+
+const MAGNIFIER_PHASE = Math.acos(1 / 3);          // ≈ 70.5°: two-thirds lit
+const SELF_LIT_TYPES = new Set(['star', 'blackhole', 'neutronstar', 'pulsar', 'magnetar', 'whitedwarf', 'galaxy', 'nebula', 'quasar']);
+const _magLightAxis = new THREE.Vector3(), _magLight = new THREE.Vector3();
+// Direction from the object to whatever lights it (null for things that shine
+// on their own): its host star for exoplanets, otherwise the Sun at the origin
+function magnifierLightDir(body, pos) {
+    if (body.type === 'star' || SELF_LIT_TYPES.has(body.data?.type)) return null;
+    if (body.data?.type === 'exoplanet' && body.parent) body.parent.getWorldPosition(_magLight);
+    else _magLight.set(0, 0, 0);
+    _magLight.sub(pos);
+    return _magLight.lengthSq() > 1e-12 ? _magLight.normalize() : null;
+}
+
+// How big the object is, for framing: its own radius if it says, else the
+// first sphere inside it (distant stars are a group around one), else its
+// bounding box. Cached on the object
+function magnifierRadius(mesh) {
+    const ud = mesh.userData;
+    if (ud.previewRadius) return ud.previewRadius;
+    if (ud.visualRadius) return ud.visualRadius;
+    if (mesh.geometry?.parameters?.radius) return mesh.geometry.parameters.radius;
+    if (ud.magnifierRadius) return ud.magnifierRadius;
+    let r = 0;
+    mesh.traverse(o => { if (!r && o.isMesh && o.geometry?.parameters?.radius) r = o.geometry.parameters.radius * o.getWorldScale(_magDir).x; });
+    if (!r) {
+        const size = new THREE.Box3().setFromObject(mesh).getSize(_magDir);
+        r = Math.max(size.x, size.y, size.z) / 2;
+    }
+    ud.magnifierRadius = r;
+    return r;
+}
+
+function setupMagnifier() {
+    const el = document.createElement('div');
+    el.id = 'magnifier';
+    // The view is drawn in the main canvas and copied into .mag-view, so the
+    // scope is one HTML layer that sits above labels like "You" (which would
+    // otherwise show through the middle of it)
+    el.innerHTML = '<canvas class="mag-view"></canvas><div class="mag-ring"></div><div class="mag-sweep"></div><div class="mag-reticle"></div>' +
+        '<div class="mag-name"></div><div class="mag-zoom"></div>';
+    document.body.appendChild(el);
+    magnifier.el = el;
+    magnifier.view = el.querySelector('.mag-view');
+    magnifier.viewCtx = magnifier.view.getContext('2d');
+    magnifier.nameEl = el.querySelector('.mag-name');
+    magnifier.zoomEl = el.querySelector('.mag-zoom');
+}
+
+function renderMagnifier() {
+    if (!magnifier.el) return;
+    const body = hoveredBody;
+    let show = false, R = 0, radiusPx = 0;
+    if (body && viewMode === 'map' && !HOVER_NONE_MQ.matches && !mouseButtonsHeld && !flyToAnimation
+        && lastMouseX >= 0 && body.mesh.visible && body.mesh !== celestialBodies.get(currentFocusedBody)?.mesh) {
+        body.mesh.getWorldPosition(_magPos);
+        const dist = camera.position.distanceTo(_magPos);
+        R = magnifierRadius(body.mesh);
+        const pxPerUnit = (window.innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
+        radiusPx = R * pxPerUnit;
+        if (R > 0 && radiusPx < MAGNIFIER_MAX_RADIUS_PX && dist > R * 4) {
+            if (magnifier.body !== body) {
+                magnifier.body = body;
+                magnifier.since = performance.now();
+                magnifier.nameEl.textContent = body.data?.name || '';
+            }
+            show = performance.now() - magnifier.since > MAGNIFIER_DELAY_MS;
+        }
+    }
+    if (!show && !body) magnifier.body = null;
+    magnifier.el.classList.toggle('visible', show);
+    if (!show) return;
+
+    // Beside the cursor: above-right (the tooltip sits below-right), flipped at the edges
+    // Above-right of the cursor (the tooltip sits below-right); with no room
+    // above, beside it on the left, centred on the cursor and kept on screen
+    const size = MAGNIFIER_PX, gap = 18;
+    const W = window.innerWidth, H = window.innerHeight, mx = lastMouseX, my = lastMouseY;
+    const tip = document.getElementById('hover-tooltip');
+    const tipRect = tip && !tip.classList.contains('hidden') ? tip.getBoundingClientRect() : null;
+    const midY = THREE.MathUtils.clamp(my - size / 2, 0, Math.max(0, H - size));
+    // First spot that fits on screen without covering the tooltip
+    const spots = [
+        [mx + gap, my - gap - size],                       // above-right
+        [mx - gap - size, my - gap - size],                // above-left
+        [mx - gap - size, midY],                           // left
+        [(tipRect ? tipRect.right : mx + gap) + gap, midY], // right, past the tooltip
+        [mx - gap - size, my + gap]                        // below-left
+    ];
+    const fits = ([l, t]) => l >= 0 && t >= 0 && l + size <= W && t + size <= H
+        && !(tipRect && l < tipRect.right && l + size > tipRect.left && t < tipRect.bottom && t + size > tipRect.top);
+    let [left, top] = spots.find(fits) || spots[0];
+    left = THREE.MathUtils.clamp(left, 0, Math.max(0, W - size));
+    top = THREE.MathUtils.clamp(top, 0, Math.max(0, H - size));
+    magnifier.el.style.transform = `translate(${left}px, ${top}px)`;
+
+    // Close-up camera, the object filling half the scope. Self-lit things
+    // (stars, black holes) are seen along your line of sight; sunlit ones from
+    // where they look two-thirds lit, so a body seen from its night side isn't
+    // just a black disc: phase angle 70.5° from its light (lit share
+    // (1 + cos α)/2 = 2/3), swung toward your actual viewpoint
+    const cam = magnifier.cam;
+    const fromViewer = _magDir.copy(camera.position).sub(_magPos).normalize();   // object → you
+    const light = magnifierLightDir(body, _magPos);
+    if (light) {
+        const axis = _magLightAxis.crossVectors(light, fromViewer);
+        if (axis.lengthSq() < 1e-8) axis.set(0, 1, 0).cross(light);
+        if (axis.lengthSq() < 1e-8) axis.set(1, 0, 0);
+        fromViewer.copy(light).applyAxisAngle(axis.normalize(), MAGNIFIER_PHASE);
+    }
+    const d = R / (MAGNIFIER_FILL * Math.tan(THREE.MathUtils.degToRad(cam.fov) / 2));
+    cam.position.copy(_magPos).addScaledVector(fromViewer, d);
+    cam.up.copy(camera.up);
+    cam.lookAt(_magPos);
+    cam.near = Math.max(d * 1e-3, 1e-7);
+    cam.updateProjectionMatrix();
+    const zoom = (MAGNIFIER_FILL * size / 2) / Math.max(radiusPx, 1e-6);
+    magnifier.zoomEl.textContent = `×${zoom >= 100 ? Math.round(zoom).toLocaleString() : zoom >= 1 ? zoom.toFixed(1) : zoom.toFixed(2)}`;
+
+    // Distant stars have their glow sprite blown up to stay a visible dot in
+    // the main view; magnified ×100s that boost became a white disc or huge
+    // spikes (a companion's glare flooded the whole scope). Draw every star's
+    // at its natural size (5× the star) for the close-up
+    if (!magnifier.spikes) {
+        magnifier.spikes = [];
+        scene.traverse(o => { if (o.name === 'starSpike' && o.userData.baseScale) magnifier.spikes.push(o); });
+    }
+    const spikeScales = magnifier.spikes.map(o => o.scale.x);
+    magnifier.spikes.forEach(o => o.scale.setScalar(o.userData.baseScale));
+
+    // Draw it into that square of the canvas
+    renderer.getViewport(_magViewport);
+    const y = window.innerHeight - top - size;
+    renderer.setScissorTest(true);
+    renderer.setScissor(left, y, size, size);
+    renderer.setViewport(left, y, size, size);
+    renderer.render(scene, cam);
+    renderer.setScissorTest(false);
+    renderer.setViewport(_magViewport);
+    magnifier.spikes.forEach((o, i) => o.scale.setScalar(spikeScales[i]));
+    // Copy it out right away (the drawing buffer isn't kept between frames)
+    const pr = renderer.getPixelRatio(), px = Math.round(size * pr);
+    if (magnifier.view.width !== px) { magnifier.view.width = px; magnifier.view.height = px; }
+    magnifier.viewCtx.drawImage(renderer.domElement, left * pr, top * pr, px, px, 0, 0, px, px);
 }
 
 // ── Earth close-up camera ────────────────────────────────────────────────
@@ -4430,9 +4644,9 @@ function focusOnBody(name) {
         // Above and behind the ISS, pointing at it but up a bit to capture sky/background
         // Local axes: +Z = travel direction (forward), +Y = radial up (away from Earth), +X = truss
         // Camera offset relative to target: above (+Y) and behind (-Z)
-        issCamOffsetLocal = new THREE.Vector3(0, 0.04, -0.11);
+        issCamOffsetLocal = ISS_CAM_OFFSET.clone();
         // Look target slightly above (+Y) and forward (+Z) so the ISS sits in the lower view
-        issTargetOffsetLocal = new THREE.Vector3(0, 0.015, 0.01);
+        issTargetOffsetLocal = ISS_TARGET_OFFSET.clone();
 
         targetLookAtPosition = worldPosition.clone().add(
             issTargetOffsetLocal.clone().applyQuaternion(issWorldQuat)
@@ -5747,6 +5961,7 @@ function onMouseMove(event) {
     }
     
     isMouseOverUI = !!event.target.closest('#ui-container');
+    mouseButtonsHeld = event.buttons;
     lastMouseX = event.clientX;
     lastMouseY = event.clientY;
     hoverStateDirty = true;
@@ -5784,6 +5999,9 @@ function showTooltip(data, x, y) {
         const actualDist = getCurrentDistanceToEarth(data);
         const distText = formatDistance(actualDist, true);
         html += `<div class="tooltip-row"><span class="tooltip-label">Distance:</span><span class="tooltip-value">${distText}</span></div>`;
+    } else if (data.distance && data.distance < LY * 0.05) {
+        // Comets, dwarf planets, spacecraft, the ISS: km / AU, not "0.00 ly"
+        html += `<div class="tooltip-row"><span class="tooltip-label">Distance:</span><span class="tooltip-value">${formatDistance(data.distance, true)}</span></div>`;
     } else if (data.distance) {
         const ly = data.distance / LY;
         if (ly > 1000) {
@@ -5934,6 +6152,17 @@ function getStarLayoutInfo() {
         const distLy = posLy.length();
         const dir = distLy > 1e-9 ? posLy.clone().divideScalar(distLy) : new THREE.Vector3(1, 0, 0);
         starLayoutInfo.push({ body, posLy, distLy, dir, ext: starSystemExtent(body) });
+    });
+    // Binary companions share their primary's catalogue position, which drew
+    // the smaller star inside the bigger one (hovering Procyon B showed
+    // Procyon A). Set each one just beside its primary, sideways to the line
+    // of sight so both are seen from home. Display only, in scene units
+    starLayoutInfo.forEach((st, i) => {
+        const primary = starLayoutInfo.slice(0, i).find(o => o.posLy.distanceToSquared(st.posLy) < 1e-8);
+        if (!primary) return;
+        const side = new THREE.Vector3(0, 1, 0).cross(st.dir);
+        if (side.lengthSq() < 1e-8) side.set(1, 0, 0);
+        st.companionOffset = side.normalize().multiplyScalar(1.3 * (primary.ext + st.ext));
     });
     // "Pull far objects in": logarithmic distances beyond the nearest star, so
     // every ×10 in true distance adds the same step (TON 618 at 18 billion ly
@@ -6087,6 +6316,7 @@ function applyLayout(layout) {
         if (!pulledTargets) pos.copy(_starLinear);
         else if (blend >= 1) pos.copy(pulledTargets[i]);
         else blendRadial(_starLinear, pulledTargets[i], blend, pos);
+        if (st.companionOffset) pos.add(st.companionOffset);
     });
     starsPulledInNow = blend > 0.01;
     currentStarBlend = blend;
@@ -6334,12 +6564,17 @@ function setFollowMode(mode) {           // 'off' | 'on' | 'angle'
 const TOUR_FAST = 20 * 86400, TOUR_SLOW = 86400;              // sim-seconds per second
 const TOUR_EARTH = 6 * 3600, TOUR_LOOKBACK = 2 * 86400, TOUR_ISS = 78;   // ISS ride at 1.3 min/s
 const TOUR_EVENTS = [0, 30, 120, 160, 260, 560, 700];         // days after the click
+// The clock eases toward the speed it should be at (log scale, this time
+// constant in real seconds), so slow-downs and speed-ups never snap
+const TOUR_SPEED_EASE = 0.45;
+const ISS_SLOWDOWN_MS = 2600;   // wind Earth's spin down before arcing to the ISS
 const TOUR_SHOT_BODY = { moon: 'Moon', lookback: 'Moon', earth: 'Earth' };
 const cheeseTour = { active: false, camera: false, clock: false, shot: null, lastSps: 0, windows: null, finale: null };
 
 function tourSpeed(day) {
     let slow = 0;
-    for (const e of TOUR_EVENTS) slow = Math.max(slow, Math.exp(-(((day - e) / 4) ** 2)));
+    // (wide enough that the eased clock has slowed by the time each beat arrives)
+    for (const e of TOUR_EVENTS) slow = Math.max(slow, Math.exp(-(((day - e) / 7) ** 2)));
     let lr = Math.log(TOUR_FAST) + (Math.log(TOUR_SLOW) - Math.log(TOUR_FAST)) * slow;
     for (const w of cheeseTour.windows || []) {
         const rampIn = w.ramp ?? 2, rampOut = w.rampOut ?? rampIn;   // days to ease in and out
@@ -6370,7 +6605,7 @@ function planTourShots() {
     const a = peak ? peak[0] + 1.45 : 700;
     cheeseTour.windows = [
         { a: a - 20, b: a, shot: 'lookback', sps: TOUR_LOOKBACK },
-        { a, b: a + 0.03, shot: 'iss', sps: TOUR_ISS, ramp: 0.05, rampOut: 0.08 }
+        { a, b: a + 0.03, shot: 'iss', sps: TOUR_ISS, ramp: 0.05, rampOut: 0.002 }   // (the eased clock smooths both ends in real time)
     ];
 }
 
@@ -6466,8 +6701,77 @@ function startTourGlide(shot, ms) {
     controls.minDistance = 1e-6;
 }
 
+// Fly to the ISS by arcing round Earth (a straight flight from beside the
+// Moon went right through the planet): the direction from Earth's centre turns
+// along a great circle while the height eases from where the camera is down
+// to the ISS view, lifted in the middle so the path rides high over the
+// globe, catching up with the station as it moves. Lands in its chase view
+function startIssArcGlide(ms, showcase) {
+    const earth = celestialBodies.get('Earth'), iss = celestialBodies.get('ISS');
+    if (!earth || !iss) return false;
+    earth.mesh.getWorldPosition(_tourF);
+    tourGlide = {
+        kind: 'issArc', shot: 'iss', name: 'ISS', start: performance.now(), ms, showcase,
+        fromPos: camera.position.clone().sub(_tourF),
+        fromTarget: controls.target.clone().sub(_tourF),
+        fromUp: camera.up.clone()
+    };
+    flyToAnimation = null;
+    focusRetarget = null;
+    earthSpotFlight = null;
+    if (currentFocusedBody !== 'ISS') {
+        currentFocusedBody = 'ISS';
+        updateSidebarSelection('ISS');
+        showBodyInfo(iss.data);
+    }
+    cameraOffsetFromTarget = null;
+    setFollowMode('on');
+    controls.minDistance = 1e-6;
+    return true;
+}
+const _arcQuat = new THREE.Quaternion(), _arcEnd = new THREE.Vector3(), _arcTarget = new THREE.Vector3(), _arcUp = new THREE.Vector3();
+function applyIssArcGlide(g) {
+    const t = Math.min(1, (performance.now() - g.start) / g.ms);
+    const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    const earth = celestialBodies.get('Earth'), iss = celestialBodies.get('ISS');
+    const RE = earth.mesh.userData.visualRadius || 1;
+    earth.mesh.getWorldPosition(_tourF);
+    iss.mesh.getWorldPosition(_tourO);
+    iss.mesh.getWorldQuaternion(_arcQuat);
+    // (the chase view puts the camera at look-at point + camera offset)
+    _arcTarget.copy(ISS_TARGET_OFFSET).applyQuaternion(_arcQuat).add(_tourO);
+    _arcEnd.copy(ISS_CAM_OFFSET).applyQuaternion(_arcQuat).add(_arcTarget).sub(_tourF);   // Earth-relative
+    _arcUp.set(0, 1, 0).applyQuaternion(_arcQuat);
+    const d0 = g.fromPos.clone().normalize(), d1 = _arcEnd.clone().normalize();
+    const axis = d0.clone().cross(d1);
+    if (axis.lengthSq() < 1e-10) axis.copy(_tourUp);
+    const dir = d0.applyAxisAngle(axis.normalize(), d0.angleTo(d1) * e);
+    const r0 = g.fromPos.length(), r1 = _arcEnd.length();
+    const r = Math.pow(r0, 1 - e) * Math.pow(r1, e) + RE * 0.6 * Math.sin(Math.PI * e) * Math.min(1, d0.angleTo(d1));
+    camera.position.copy(_tourF).addScaledVector(dir, Math.max(r, RE * 1.02));
+    controls.target.copy(g.fromTarget).add(_tourF).lerp(_arcTarget, e);
+    camera.up.copy(g.fromUp).lerp(_arcUp, e).normalize();
+    if (t >= 1) {
+        // Hand over to the ISS chase view, as a normal flight to it ends
+        tourGlide = null;
+        isCameraLocked = true;
+        cameraAngleLock = true;
+        chaseCam.bodyName = 'ISS';
+        chaseCam.offsetLocal.copy(ISS_CAM_OFFSET);
+        chaseCam.targetOffsetLocal.copy(ISS_TARGET_OFFSET);
+        chaseCam.upLocal.set(0, 1, 0);
+        chaseCam.hasOffset = true;
+        document.getElementById('camera-lock-mode').textContent = 'On + angle';
+        controls.minDistance = (iss.mesh.userData.visualRadius || 0.022) * 0.01;
+        cheeseTour.issFlight = false;
+        cheeseTour.shot = 'iss';
+        if (g.showcase && cheeseMoon?.active) scheduleIssShowcase((simDate.getTime() - cheeseMoon.triggeredAt) / MS_PER_DAY);
+    }
+}
+
 function applyTourGlide() {
     const g = tourGlide;
+    if (g?.kind === 'issArc') { applyIssArcGlide(g); return; }
     if (!g) {
         // Earth shot: keep re-framing as the Moon moves round (Earth spins,
         // so an Earth-locked angle wouldn't hold the Moon in view)
@@ -6502,7 +6806,8 @@ function applyTourGlide() {
 
 function startCheeseTour() {
     Object.assign(cheeseTour, {
-        active: true, camera: true, clock: true, shot: null, windows: null, finale: null, issTry: null, issFlight: false
+        active: true, camera: true, clock: true, shot: null, windows: null, finale: null, issTry: null, issFlight: false,
+        issSlowing: null, logSps: null, logVel: 0, lastClockAt: null
     });
     startTourGlide('moon', 6000);
     setSimRateSps(tourSpeed(0));
@@ -6510,7 +6815,7 @@ function startCheeseTour() {
 }
 
 function stopCheeseTour() {
-    Object.assign(cheeseTour, { active: false, camera: false, clock: false, finale: null, issFlight: false });
+    Object.assign(cheeseTour, { active: false, camera: false, clock: false, finale: null, issFlight: false, issSlowing: null, logSps: null, logVel: 0, lastClockAt: null });
     tourGlide = null;
 }
 
@@ -6581,17 +6886,14 @@ function updateCheeseFinale() {
                 f.step = 'iss';
                 f.issStart = t;
                 setSimRateSps(60);
-                if (cheeseTour.camera) focusOnBody('ISS');
+                if (cheeseTour.camera) startIssArcGlide(5000, false);
             } else {
                 f.step = 'done';
             }
         }
     }
     if (f.step === 'iss') {
-        if (cheeseTour.camera && !f.issLocked && !flyToAnimation && !focusRetarget) {
-            setFollowMode('angle');                      // ride along, Earth turning below
-            f.issLocked = true;
-        }
+        if (!tourGlide) f.issLocked = true;           // (the arc lands in the chase view)
         if (t > f.issStart + FINALE.issFor) f.step = 'done';
     }
     if (f.step === 'done') endCheeseMoon(true);
@@ -6613,9 +6915,17 @@ function updateCheeseTour() {
         const issWin = windows.find(w => w.shot === 'iss');
         // The ISS ride is short: one fast frame can step right over it, so
         // once its start has passed it always plays, from its start
-        let want = issWin && !issWin.started && day >= issWin.a ? 'iss'
+        let want = (issWin && !issWin.started && day >= issWin.a) || cheeseTour.issSlowing ? 'iss'
             : windows.find(w => day >= w.a && day < w.b)?.shot || 'moon';
-        if (want === 'iss' && cheeseTour.shot !== 'iss' && !cheeseTour.issFlight) {
+        if (want === 'iss' && cheeseTour.shot !== 'iss' && !cheeseTour.issFlight && !cheeseTour.issTry
+            && (!cheeseTour.issSlowing || performance.now() - cheeseTour.issSlowing < ISS_SLOWDOWN_MS)) {
+            // Earth was spinning fast: hold this shot while the clock winds
+            // down to the ride's speed, then go
+            cheeseTour.issSlowing ??= performance.now();
+            issWin.started = true;
+            want = cheeseTour.shot;
+        } else if (want === 'iss' && cheeseTour.shot !== 'iss' && !cheeseTour.issFlight) {
+            cheeseTour.issSlowing = null;
             if (!cheeseTour.issTry) {
                 cheeseTour.issTry = { frames: 0 };
                 issWin.started = true;
@@ -6624,21 +6934,14 @@ function updateCheeseTour() {
                 document.getElementById('tl-goto-now')?.click();
                 cheeseMoon.rebase(simDate.getTime(), Math.min(day, issWin.a + 0.01));
             }
-            if (celestialBodies.get('ISS')?.mesh.visible) {
+            if (celestialBodies.get('ISS')?.mesh.visible && startIssArcGlide(5000, true)) {
                 cheeseTour.issFlight = true;
-                setFollowMode('on');
-                focusOnBody('ISS');
             } else {
                 want = ++cheeseTour.issTry.frames < 30 ? cheeseTour.shot : 'earth';   // give it a moment to appear
             }
         }
         if (cheeseTour.issFlight) {
-            if (!flyToAnimation && !focusRetarget) {
-                cheeseTour.issFlight = false;
-                cheeseTour.shot = 'iss';
-                setFollowMode('angle');             // ride along, Earth turning below
-                scheduleIssShowcase(day);
-            }
+            // (arcing in: applyIssArcGlide finishes it)
         } else if (want !== cheeseTour.shot && want !== 'iss') {
             startTourGlide(want, 4500);
         }
@@ -6648,7 +6951,20 @@ function updateCheeseTour() {
         if (Math.abs(now - cheeseTour.lastSps) > Math.abs(cheeseTour.lastSps) * 0.01 + 1) {
             cheeseTour.clock = false;                 // the user changed the speed
         } else {
-            const sps = tourSpeed(day);
+            // Ease toward the speed the story wants (the ride's while winding
+            // down for the ISS), in real time
+            const target = cheeseTour.issSlowing ? TOUR_ISS : tourSpeed(day);
+            const t = performance.now();
+            const dt = Math.min(0.1, (t - (cheeseTour.lastClockAt ?? t)) / 1000);
+            cheeseTour.lastClockAt = t;
+            // Critically damped spring on log speed: starts gently, no lurch
+            // (a plain exponential ease did most of its change in the first frames)
+            cheeseTour.logSps ??= Math.log(Math.max(Math.abs(now), 1));
+            cheeseTour.logVel ??= 0;
+            const w = 1 / TOUR_SPEED_EASE;
+            cheeseTour.logVel += (w * w * (Math.log(target) - cheeseTour.logSps) - 2 * w * cheeseTour.logVel) * dt;
+            cheeseTour.logSps += cheeseTour.logVel * dt;
+            const sps = Math.exp(cheeseTour.logSps);
             if (Math.abs(sps - now) > now * 0.02) setSimRateSps(sps);
             cheeseTour.lastSps = currentSimSps();
         }
