@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=226';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=226';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=227';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=227';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=226';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=226';
-import { initCheeseMoon } from './cheeseMoon.js?v=226';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=226';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=226';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=226';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=226';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=227';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=227';
+import { initCheeseMoon } from './cheeseMoon.js?v=227';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=227';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=227';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=227';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=227';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=226';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=226';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=227';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=227';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -6937,7 +6937,10 @@ function updateCheeseTour() {
             if (celestialBodies.get('ISS')?.mesh.visible && startIssArcGlide(5000, true)) {
                 cheeseTour.issFlight = true;
             } else {
-                want = ++cheeseTour.issTry.frames < 30 ? cheeseTour.shot : 'earth';   // give it a moment to appear
+                // Give it a moment to appear (its orbit may still be loading);
+                // 30 frames was too short at high frame rates and the ride was skipped
+                cheeseTour.issTry.t0 ??= performance.now();
+                want = performance.now() - cheeseTour.issTry.t0 < 4000 ? cheeseTour.shot : 'earth';
             }
         }
         if (cheeseTour.issFlight) {
