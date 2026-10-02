@@ -558,11 +558,11 @@ export const nearbyStars = [
         subtype: "stellar",
         distance: 3000 * LY,
         direction: { x: -7.12, y: 2.34, z: 4.56 },
-        radius: 26, // km
+        radius: 17, // km (Schwarzschild radius of ~5.9 Solar masses)
         displayRadius: 10,
         color: 0x000000,
         accretionColor: 0xFF6644,
-        mass: "11 Solar masses",
+        mass: "≈6 Solar masses",
         temperature: "Microquasar (X-ray binary)",
         description: "Closest known black hole to Earth"
     },
@@ -673,11 +673,11 @@ export const nearbyStars = [
         subtype: "supermassive",
         distance: 18200000000 * LY, // 18.2 billion LY
         direction: { x: -45.67, y: 23.45, z: 156.78 },
-        radius: 194700000000, // km (Schwarzschild radius ~194.7 billion km)
+        radius: 120200000000, // km (Schwarzschild radius of 40.7 billion Solar masses)
         displayRadius: 25,
         color: 0x000000,
         accretionColor: 0xFFAA00,
-        mass: "66 × 10⁹ Solar masses",
+        mass: "40.7 × 10⁹ Solar masses",
         temperature: "Quasar accretion disk",
         description: "One of the most massive black holes known, powers a quasar"
     },
@@ -691,9 +691,9 @@ export const nearbyStars = [
         displayRadius: 28,
         color: 0x000000,
         accretionColor: 0xFF3300,
-        mass: "100 × 10⁹ Solar masses",
+        mass: "~100 × 10⁹ Solar masses (model estimate)",
         temperature: "Active galactic nucleus / Quasar",
-        description: "Currently the most massive known black hole in the universe"
+        description: "Possibly the most massive black hole known. Its mass comes from modelling the galaxy around it and hasn't been measured directly"
     },
     {
         name: "J0529-4351",
@@ -781,7 +781,7 @@ export const nearbyStars = [
     },
     {
         name: "Stephenson 2-18",
-        mass: "14-20 Solar masses",
+        mass: "Not measured",
         type: "star",
         spectralClass: "M6",
         distance: 18900 * LY,
@@ -791,7 +791,7 @@ export const nearbyStars = [
         emissive: 0xAA1100,
         emissiveIntensity: 0.7,
         temperature: "3,200 K",
-        description: "One of the largest known stars. Despite being 2,150x wider than the Sun, it is extremely low-density—so its mass is only 14-20x the Sun's."
+        description: "One of the largest known stars. About 2,150 times wider than the Sun (a 2026 study puts it nearer 1,840), but so thin that it would weigh only a few tens of Suns at most. Its mass has never been measured."
     },
     {
         name: "UY Scuti",
@@ -1422,7 +1422,7 @@ export const sizeComparison = [
     },
     {
         name: "Stephenson 2-18",
-        mass: "14-20 Solar masses",
+        mass: "Not measured",
         type: "star",
         radius: 1497131000
     },
@@ -1439,7 +1439,7 @@ export const sizeComparison = [
     {
         name: "TON 618",
         type: "blackhole",
-        radius: 195000000000
+        radius: 120200000000
     },
     {
         name: "Phoenix A*",

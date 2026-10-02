@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=223';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=223';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=226';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=226';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=223';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=223';
-import { initCheeseMoon } from './cheeseMoon.js?v=223';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=223';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=223';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=223';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=223';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=226';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=226';
+import { initCheeseMoon } from './cheeseMoon.js?v=226';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=226';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=226';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=226';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=226';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=223';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=223';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=226';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=226';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -4169,7 +4169,7 @@ function magnifierLightDir(body, pos) {
 function magnifierRadius(mesh) {
     const ud = mesh.userData;
     if (ud.previewRadius) return ud.previewRadius;
-    if (ud.visualRadius) return ud.visualRadius;
+    if (ud.visualRadius) return ud.visualRadius * (ud.shapeExtent || 1);
     if (mesh.geometry?.parameters?.radius) return mesh.geometry.parameters.radius;
     if (ud.magnifierRadius) return ud.magnifierRadius;
     let r = 0;
@@ -5253,9 +5253,9 @@ function showBodyInfo(data) {
         else if (massStr.includes('10^26')) multiplier = 100000000000000000000000000;
         else if (massStr.includes('10^27')) multiplier = 1000000000000000000000000000;
         
-        // Remove approx symbols for parsing
-        let cleanStr = massStr.replace(/~/g, '').replace(/to/g, '').replace(/-/g, '').trim();
-        let match = cleanStr.match(/^([0-9.]+)/);
+        // First number (the low end of a range like "7-10"; stripping the
+        // hyphen read that as 710)
+        let match = massStr.replace(/[~≈]/g, '').trim().match(/^([0-9.]+)/);
         
         if (match) {
             let val = parseFloat(match[1]);
@@ -9305,7 +9305,7 @@ function populateObjectList() {
             const radius = body.data.radius || 0;
             const sizePercentage = maxRadius > 0 ? (radius / maxRadius) * 100 : 0;
 
-            html += `<div class="object-item ${itemClass}" onclick="focusOnBody('${name}')" onmouseenter="startHoverGuide('${name}')" onmouseleave="cancelHoverGuide()" data-name="${name}">
+            html += `<div class="object-item ${itemClass}" onclick="focusOnBody(this.dataset.name)" onmouseenter="startHoverGuide(this.dataset.name)" onmouseleave="cancelHoverGuide()" data-name="${name}">
                 <div class="object-info">
                     <span>${name}${sizeLabel ? ` (${sizeLabel})` : ''}</span>
                 </div>
@@ -9332,7 +9332,7 @@ function populateObjectList() {
                     const moonRadius = moonBody.data.radius || 0;
                     const moonSizePercentage = maxRadius > 0 ? (moonRadius / maxRadius) * 100 : 0;
 
-                    html += `<div class="object-item moon" style="margin-left: 20px;" onclick="focusOnBody('${moonName}')" onmouseenter="startHoverGuide('${moonName}')" onmouseleave="cancelHoverGuide()" data-name="${moonName}">
+                    html += `<div class="object-item moon" style="margin-left: 20px;" onclick="focusOnBody(this.dataset.name)" onmouseenter="startHoverGuide(this.dataset.name)" onmouseleave="cancelHoverGuide()" data-name="${moonName}">
                         <div class="object-info">
                             <span>${moonName}${moonSizeLabel ? ` (${moonSizeLabel})` : ''}</span>
                         </div>

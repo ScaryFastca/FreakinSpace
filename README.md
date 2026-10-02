@@ -85,6 +85,11 @@ no framework, no account.
   Horizons probes, at their real positions. Comets grow a glowing coma and two
   tails as they near the Sun: a straight blue gas tail pointing away from it and
   a curved dust tail
+- Pluto and Ceres wear their real surfaces, mapped by New Horizons and Dawn, and
+  Voyager 1 & 2 and New Horizons are NASA's 3D models, dishes turned toward home
+- Odd shapes where they're known: Halley's dark peanut-shaped nucleus, egg-shaped
+  Haumea with its ring, ʻOumuamua's long cigar and lumpy Apophis, each spinning at
+  its real rate
 - **Hover magnifier.** Rest the cursor on a distant planet, star or black hole
   for a second and a scope opens beside it with a live close-up, so you can see
   what it is without flying there (sunlit worlds are shown from their day side)
@@ -143,7 +148,7 @@ js/earthTiles.js      Streaming imagery and night street map for Earth close-ups
 js/stellarEffects.js  Star surface, corona and black hole shaders
 js/textures.js        Procedural textures for bodies without real maps
 textures/             Planet and Earth maps
-models/iss.glb        ISS 3D model
+models/               ISS, Voyager and New Horizons 3D models
 data/                 Star catalogue and constellation lines
 ```
 
@@ -158,6 +163,7 @@ bump it when the CSS changes.
 |---|---|---|
 | Planet, Moon and Earth maps | [Solar System Scope](https://www.solarsystemscope.com/textures/), based on NASA data | CC BY 4.0 |
 | ISS 3D models | [NASA 3D Resources](https://github.com/nasa/NASA-3D-Resources) (distant view); [NASA VTAD textured model](https://science.nasa.gov/resource/international-space-station-3d-model/) (close-up, compressed with glTF-Transform) | Public domain |
+| Voyager and New Horizons models; Pluto and Ceres maps | [NASA 3D Resources](https://science.nasa.gov/3d-resources/) (NASA VTAD; compressed with glTF-Transform) | Public domain |
 | ISS orbit | [Where the ISS at?](https://wheretheiss.at/) API | Free public API |
 | Satellite orbits | [CelesTrak](https://celestrak.org/) | Free public data |
 | Orbit propagation | [satellite.js](https://github.com/shashwatak/satellite-js) (SGP4) | MIT |

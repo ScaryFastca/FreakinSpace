@@ -13,6 +13,9 @@
 // that follows the planets' current orbit radii (so Ceres sits between Mars
 // and Jupiter at any Scale setting); directions are true.
 import * as THREE from 'three';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
 const K = 0.01720209895;               // Gaussian gravitational constant (rad/day, AU^1.5)
 const MS_PER_DAY = 86400000;
@@ -33,6 +36,8 @@ export const SMALL_BODY_GROUPS = {
 // Hyperbolic orbits give q (perihelion distance) instead of a.
 const BODIES = [
     { name: 'Pluto', group: 'dwarf', radiusKm: 1188, color: 0xd8b48a, mass: '1.30 × 10²² kg',
+      // New Horizons mosaic (NASA; sharp on the side it flew past in 2015). Spins backwards every 6.4 days
+      map: 'textures/2k_pluto.jpg', spinHours: -153.29,
       orbit: { a: 39.482, e: 0.2488, i: 17.14, node: 110.30, peri: 113.76, tp: '1989-09-05' },
       description: 'Dwarf planet in the Kuiper Belt. Its tilted, stretched orbit brings it closer to the Sun than Neptune for 20 years of each 248-year lap. Visited by New Horizons in 2015.' },
     { name: 'Eris', group: 'dwarf', radiusKm: 1163, color: 0xe8e8e8, mass: '1.66 × 10²² kg',
@@ -42,35 +47,48 @@ const BODIES = [
       orbit: { a: 45.43, e: 0.161, i: 28.98, node: 79.62, peri: 294.83, tp: '1881-01-01' },
       description: 'Reddish Kuiper Belt dwarf planet with one small moon. Takes about 306 years to orbit the Sun.' },
     { name: 'Haumea', group: 'dwarf', radiusKm: 816, color: 0xdfe6ee, mass: '4.0 × 10²¹ kg',
+      // ~2100 × 1680 × 1070 km, spinning every 3.9 h about its short axis, ring at ~2,290 km
+      shape: { axes: [1050, 537, 840], spinHours: 3.915, ring: 2287, frame: 1.64 },
       orbit: { a: 43.12, e: 0.195, i: 28.21, node: 121.79, peri: 239.04, tp: '2133-01-01' },
       description: 'Egg-shaped dwarf planet that spins once every 4 hours, with a ring and two moons.' },
     { name: 'Ceres', group: 'dwarf', radiusKm: 470, color: 0x9a948c, mass: '9.4 × 10²⁰ kg',
+      // Dawn mosaic and relief (NASA); slightly squashed by its 9-hour spin
+      map: 'textures/2k_ceres.jpg', normalMap: 'textures/2k_ceres_normal.jpg', flatten: 0.923, spinHours: 9.07,
       orbit: { a: 2.767, e: 0.0785, i: 10.59, node: 80.27, peri: 73.60, tp: '2022-12-07' },
       description: 'The largest object in the asteroid belt and the only dwarf planet in the inner Solar System. Mapped up close by NASA\'s Dawn spacecraft.' },
     { name: 'Apophis', group: 'asteroid', radiusKm: 0.17, color: 0xb09a80,
+      // radar: elongated, possibly two lobes in contact; 30.6 h tumble
+      shape: { axes: [1.45, 0.95, 1], pinch: 0.18, lumps: 0.1, seed: 7, spinHours: 30.6 },
       // time of perihelion chosen so it crosses Earth's orbit at Earth's spot
       // on 2029-04-13 21:46 UTC (its famous close pass)
       orbit: { a: 0.9224, e: 0.1911, i: 3.339, node: 204.43, peri: 126.4, tpJD: 2462336.787 },
       description: 'Near-Earth asteroid about 340 m across. On 13 April 2029 it passes about 32,000 km above Earth, closer than the geostationary satellites, and will be visible to the naked eye.' },
     { name: 'Halley\'s Comet', group: 'comet', radiusKm: 5.5, color: 0xa9c4e0, comet: true,
+      // Giotto/Vega: a dark peanut about 15 × 8 × 7.5 km
+      // (coal-dark: it reflects only ~4% of sunlight)
+      shape: { axes: [15, 7.5, 8.2], pinch: 0.22, lumps: 0.08, seed: 3, spinHours: 52.8, surface: 0x55504a },
       orbit: { a: 17.83, e: 0.96714, i: 162.26, node: 58.42, peri: 111.33, tp: '1986-02-09T12:00Z' },
       description: 'The best-known periodic comet, returning about every 76 years on a backwards (retrograde) orbit. Last seen in 1986, it turned for home in late 2023 and will be back in 2061.' },
     { name: 'ʻOumuamua', group: 'interstellar', radiusKm: 0.1, color: 0xff9a66,
+      // the classic picture: a reddish cigar ~6:1, tumbling every ~8 h
+      shape: { axes: [6, 1, 1.15], lumps: 0.07, seed: 11, spinHours: 8.67, frame: 1.83 },
       orbit: { q: 0.25534, e: 1.20113, i: 122.74, node: 24.60, peri: 241.81, tp: '2017-09-09T12:10Z' },
       description: 'The first object known to come from another star (2017). Long and thin or flat, it sped up slightly as it left, most likely from gas escaping its surface.' },
     { name: '2I/Borisov', group: 'interstellar', radiusKm: 0.5, color: 0x88ddff, comet: true,
+      shape: { axes: [1.3, 0.9, 1], lumps: 0.1, seed: 5, spinHours: 20 },
       orbit: { q: 2.00652, e: 3.3565, i: 44.05, node: 308.15, peri: 209.12, tp: '2019-12-08T13:00Z' },
       description: 'The first known interstellar comet, discovered by amateur astronomer Gennadiy Borisov in 2019.' },
     { name: '3I/ATLAS', group: 'interstellar', radiusKm: 1, color: 0x9dff9d, comet: true,
+      shape: { axes: [1.2, 0.95, 1], lumps: 0.1, seed: 9, spinHours: 16.2 },
       orbit: { q: 1.3565, e: 6.139, i: 175.11, node: 322.16, peri: 128.01, tp: '2025-10-29T11:30Z' },
       description: 'The third known interstellar visitor, a comet found in July 2025, on a very fast, open path through the inner Solar System.' },
-    { name: 'Voyager 1', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a,
+    { name: 'Voyager 1', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a, model: 'models/voyager.glb',
       coast: { ra: 258.3, dec: 12.0, au: 164.8, at: '2025-01-01', auPerYear: 3.573, from: '1981-01-01' },
       description: 'Launched 1977, the most distant human-made object, leaving at about 17 km/s. Its nuclear power is running down; contact is expected to end around 2030.' },
-    { name: 'Voyager 2', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a,
+    { name: 'Voyager 2', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a, model: 'models/voyager.glb',
       coast: { ra: 301.3, dec: -58.4, au: 138.0, at: '2025-01-01', auPerYear: 3.25, from: '1990-01-01' },
       description: 'The only spacecraft to visit Uranus (1986) and Neptune (1989). Now in interstellar space, with power expected to last until about 2030.' },
-    { name: 'New Horizons', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a,
+    { name: 'New Horizons', group: 'spacecraft', radiusKm: 0.002, color: 0xffd27a, model: 'models/new_horizons.glb',
       coast: { ra: 290.8, dec: -20.4, au: 60.8, at: '2025-01-01', auPerYear: 2.91, from: '2019-06-01' },
       description: 'Flew past Pluto in 2015 and the Kuiper Belt object Arrokoth in 2019, and is now heading out of the Solar System.' }
 ];
@@ -283,6 +301,108 @@ function updateCometTails(e, jd, rAU, mapAU, camera) {
     e.group.userData.previewRadius = comaSize * 0.6;                     // hover magnifier frames the coma
 }
 
+// ── Shapes ──────────────────────────────────────────────────────────────
+// Bodies that aren't round get their shape baked into the geometry: an
+// ellipsoid with the given axis ratios (scaled so the mean radius is the
+// body's radius), optionally pinched at the waist into a peanut and roughened
+// with a few seeded bumps. The short axis is Y, the spin axis
+function seededRandom(seed) {
+    let t = seed * 0x6D2B79F5;
+    return () => {
+        t = (t + 0x6D2B79F5) | 0;
+        let x = Math.imul(t ^ (t >>> 15), 1 | t);
+        x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+        return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+function makeBodyGeometry(radius, shape) {
+    if (!shape) return new THREE.SphereGeometry(radius, 24, 16);
+    let geo = new THREE.IcosahedronGeometry(1, shape.lumps ? 40 : 24);
+    geo.deleteAttribute('normal');
+    geo.deleteAttribute('uv');
+    geo = mergeVertices(geo);
+    const [ax, ay, az] = shape.axes;
+    const mean = Math.cbrt(ax * ay * az);
+    const sx = ax / mean, sy = ay / mean, sz = az / mean;
+    const rand = seededRandom(shape.seed || 1);
+    // Broad lumps, then finer knobbly detail
+    const bump = (k0, k1, amp) => {
+        const d = new THREE.Vector3(rand() * 2 - 1, rand() * 2 - 1, rand() * 2 - 1).normalize();
+        return { d, k: k0 + rand() * (k1 - k0), ph: rand() * Math.PI * 2, a: amp * (0.4 + rand() * 0.6) };
+    };
+    const bumps = shape.lumps ? [
+        ...Array.from({ length: 7 }, () => bump(1.5, 5.5, shape.lumps * 2 / 7)),
+        ...Array.from({ length: 14 }, () => bump(8, 18, shape.lumps * 0.5 / 14 * 2))
+    ] : [];
+    const pos = geo.attributes.position, v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).normalize();
+        let r = 1;
+        for (const b of bumps) r += b.a * Math.sin(b.k * v.dot(b.d) * Math.PI + b.ph);
+        if (shape.pinch) r *= 1 - shape.pinch * Math.exp(-(v.x * v.x) / 0.08);   // waist between two lobes
+        pos.setXYZ(i, v.x * sx * r * radius, v.y * sy * r * radius, v.z * sz * r * radius);
+    }
+    geo.computeVertexNormals();
+    return geo;
+}
+
+// Haumea's thin ring, in its equatorial plane
+function makeRing(radius, shape, color) {
+    const r = radius * shape.ring / Math.cbrt(shape.axes[0] * shape.axes[1] * shape.axes[2]);
+    const ring = new THREE.Mesh(
+        new THREE.RingGeometry(r * 0.975, r * 1.025, 160),
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = Math.PI / 2;
+    ring.raycast = () => {};
+    return ring;
+}
+
+// ── Spacecraft models ───────────────────────────────────────────────────
+// NASA's models (Visualization Technology Applications and Development,
+// public domain; Draco + WebP). Loaded the first time the camera comes
+// close, then shown in place of the placeholder sphere, dish toward home
+const DRACO_DECODER_PATH = 'https://unpkg.com/three@0.160.0/examples/jsm/libs/draco/gltf/';
+const MODEL_LOAD_RADII = 400;
+let gltfLoader = null;
+const textureLoader = new THREE.TextureLoader();
+
+// In both files the high-gain dish faces −Y; turn that to +Z so lookAt aims it
+const DISH_TO_Z = new THREE.Matrix4().makeRotationX(Math.PI / 2);
+
+function loadSpacecraftModel(e) {
+    e.modelState = 'loading';
+    if (!gltfLoader) {
+        gltfLoader = new GLTFLoader();
+        gltfLoader.setDRACOLoader(new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH));
+    }
+    gltfLoader.load(e.data.model, gltf => {
+        const model = gltf.scene;
+        model.applyMatrix4(DISH_TO_Z);
+        const sphere = new THREE.Box3().setFromObject(model).getBoundingSphere(new THREE.Sphere());
+        const holder = new THREE.Group();
+        holder.add(model);
+        model.position.sub(sphere.center);
+        holder.scale.setScalar(e.enlargedRadius / sphere.radius);
+        model.traverse(o => {
+            delete o.userData.name;              // picks resolve to the spacecraft's group
+            if (!o.isMesh) return;
+            o.raycast = () => {};                // the (hidden) sphere is the click target
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            // Fully metallic foil renders black with nothing around to reflect
+            mats.forEach(m => { if (m.metalness > 0.5) { m.metalness = 0.45; m.roughness = Math.max(m.roughness, 0.45); } });
+        });
+        e.sphere.add(holder);
+        e.sphere.material.visible = false;
+        e.model = holder;
+        e.modelState = 'done';
+    }, undefined, err => {
+        e.modelState = 'failed';
+        console.warn(`${e.data.name} model failed to load; keeping the sphere:`, err);
+    });
+}
+
 // ── Scene objects ───────────────────────────────────────────────────────
 const entries = []; // { data, group, marker, path, pathAU, dir }
 const groupVisible = Object.fromEntries(Object.keys(SMALL_BODY_GROUPS).map(g => [g, true]));
@@ -315,10 +435,27 @@ export function initSmallBodies(scene) {
         group.userData.name = b.name;
         const visualRadius = b.group === 'dwarf' ? Math.max(b.radiusKm / 5000, 0.3) : 0.2;
         group.userData.visualRadius = visualRadius;
+        // How far out to frame it (hover magnifier), in radii: long shapes and rings
+        if (b.shape) group.userData.shapeExtent = b.shape.frame || Math.max(...b.shape.axes) / Math.cbrt(b.shape.axes.reduce((x, y) => x * y, 1));
+        const material = new THREE.MeshStandardMaterial({ color: b.shape?.surface ?? b.color, roughness: 0.9, metalness: 0 });
+        if (b.map) {
+            material.map = textureLoader.load(b.map, () => material.color.set(0xffffff));
+            material.map.colorSpace = THREE.SRGBColorSpace;
+            material.map.anisotropy = 4;
+        }
+        if (b.normalMap) {
+            material.normalMap = textureLoader.load(b.normalMap);
+            material.normalScale.setScalar(0.8);
+        }
         const sphere = new THREE.Mesh(
-            new THREE.SphereGeometry(visualRadius, 24, 16),
-            new THREE.MeshStandardMaterial({ color: b.color, roughness: 0.9, metalness: 0 })
+            b.map ? new THREE.SphereGeometry(visualRadius, 64, 32) : makeBodyGeometry(visualRadius, b.shape),
+            material
         );
+        if (b.flatten) sphere.geometry.scale(1, b.flatten, 1);
+        if (b.shape?.ring) sphere.add(makeRing(visualRadius, b.shape, b.color));
+        // A fixed tilt for each, so they don't all spin about the ecliptic pole
+        if (b.shape) sphere.rotation.order = 'ZXY';
+        if (b.shape) { sphere.rotation.x = 0.5 + (b.shape.seed || 0) * 0.37; sphere.rotation.z = 0.3 - (b.shape.seed || 0) * 0.21; }
         group.add(sphere);
         // Always-visible dot so they can be found from afar (not clickable
         // itself: Points hit-test within a whole scene unit)
@@ -395,6 +532,12 @@ export function updateSmallBodies(simDate, mapAU, visible, registry, camera = nu
         if (reg) reg.data.distance = _pos.distanceTo(_earth) * 149597870.7;
         e.group.position.copy(_pos).multiplyScalar(mapAU(rAU) / rAU);
         e.group.visible = shown;
+        const spin = b.spinHours ?? b.shape?.spinHours;
+        if (spin) e.sphere.rotation.y = ((jd * 24 / spin) % 1) * Math.PI * 2;
+        if (b.model && shown && camera) {
+            if (!e.modelState && camera.position.distanceTo(e.group.position) < e.group.userData.visualRadius * MODEL_LOAD_RADII) loadSpacecraftModel(e);
+            if (e.model) e.sphere.lookAt(0, 0, 0);   // dish toward the Sun (and Earth, from out there)
+        }
         if (e.tails && shown) updateCometTails(e, jd, rAU, mapAU, camera);
 
         // Orbit / trajectory line
