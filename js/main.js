@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=204';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=204';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=205';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=205';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=204';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=204';
-import { initCheeseMoon } from './cheeseMoon.js?v=204';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=204';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=204';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=204';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=204';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=205';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=205';
+import { initCheeseMoon } from './cheeseMoon.js?v=205';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=205';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=205';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=205';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=205';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=204';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=204';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=205';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=205';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.

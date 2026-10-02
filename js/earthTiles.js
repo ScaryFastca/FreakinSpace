@@ -38,6 +38,63 @@ const NIGHT_IF_SUNDOT_BELOW = 0.15;
 // (50.2 / blue_z)^2.2, and land/cloud pixels are left alone (see shader).
 const OCEAN_GAIN_BY_Z = { 4: 0.43, 5: 0.47, 6: 0.48, 7: 0.70, 8: 1, 9: 1.34, 10: 1.65, 11: 1.91 };
 const oceanGainFor = z => OCEAN_GAIN_BY_Z[z] ?? (z < 4 ? 0.43 : 1.85); // z12+ is a flat fill ≈ z11
+// The table above is measured on open ocean; seas like the Mediterranean shift
+// by a different amount, so a fixed gain still left lighter/darker squares
+// there as finer tiles replaced coarser ones. Each day tile is therefore
+// matched to its parent: its water is sampled (32×32) and its gain set so its
+// mean water brightness equals that of the parent's matching quarter, as the
+// parent was drawn. The table only seeds the chain (and covers tiles whose
+// parent isn't loaded). Same water test as the shader (see `ocean` there)
+const WATER_SAMPLE = 32, MIN_WATER_SAMPLES = 24;
+const srgbToLinear = c => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
+const smoothstep = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+let waterCanvas = null;
+// Mean linear brightness of water pixels: whole tile and each quarter
+// (q = row * 2 + col, row 0 = north). The bitmap was flipped at decode, so
+// its bottom rows are the tile's north edge
+function waterStats(bitmap) {
+    try {
+        waterCanvas ??= typeof OffscreenCanvas !== 'undefined'
+            ? new OffscreenCanvas(WATER_SAMPLE, WATER_SAMPLE)
+            : Object.assign(document.createElement('canvas'), { width: WATER_SAMPLE, height: WATER_SAMPLE });
+        const ctx = waterCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(bitmap, 0, 0, WATER_SAMPLE, WATER_SAMPLE);
+        const px = ctx.getImageData(0, 0, WATER_SAMPLE, WATER_SAMPLE).data;
+        const sum = [0, 0, 0, 0], wsum = [0, 0, 0, 0];
+        const half = WATER_SAMPLE / 2;
+        for (let j = 0; j < WATER_SAMPLE; j++) {
+            const row = j >= half ? 0 : 1;              // flipped: bottom half of the bitmap is north
+            for (let i = 0; i < WATER_SAMPLE; i++) {
+                const k = (j * WATER_SAMPLE + i) * 4;
+                const r = srgbToLinear(px[k] / 255), g = srgbToLinear(px[k + 1] / 255), b = srgbToLinear(px[k + 2] / 255);
+                const w = (1 - smoothstep(0.03, 0.08, r)) * (r * 3 <= b ? 1 : 0);
+                if (!w) continue;
+                const q = row * 2 + (i >= half ? 1 : 0);
+                sum[q] += w * (0.2126 * r + 0.7152 * g + 0.0722 * b);
+                wsum[q] += w;
+            }
+        }
+        const total = wsum.reduce((a, b) => a + b, 0);
+        return {
+            mean: total ? sum.reduce((a, b) => a + b, 0) / total : 0, weight: total,
+            qMean: sum.map((v, q) => (wsum[q] ? v / wsum[q] : 0)), qWeight: wsum
+        };
+    } catch (err) {
+        return null;                                   // e.g. a tainted canvas: fall back to the table
+    }
+}
+// Gain for a day tile from its parent (see above)
+function matchedOceanGain(entry) {
+    const fallback = oceanGainFor(entry.z);
+    const w = entry.water;
+    const parent = cache.get(`${entry.z - 1}/${entry.x >> 1}/${entry.y >> 1}`);
+    const pw = parent?.water;
+    if (!w || !pw || parent.oceanGain === undefined || w.weight < MIN_WATER_SAMPLES || w.mean <= 0) return fallback;
+    const q = (entry.y & 1) * 2 + (entry.x & 1);
+    if (pw.qWeight[q] < MIN_WATER_SAMPLES / 4 || pw.qMean[q] <= 0) return fallback;
+    const gain = parent.oceanGain * pw.qMean[q] / w.mean;
+    return Math.min(fallback * 2.5, Math.max(fallback / 2.5, gain));
+}
 const NIGHT_MAP_GAIN = 0.9;  // keep the dark-grey map dark after tone mapping
 const LABEL_GAIN = 1.6;     // keep street names legible after tone mapping
 
@@ -160,9 +217,10 @@ const TILE_FRAGMENT = /* glsl */`
         // Day: Lambert-lit imagery, matching MeshStandardMaterial's albedo / PI
         // scaling. If the imagery isn't loaded, show the street map instead.
         vec3 imagery = texture2D(dayMap, vUv).rgb;
-        // Deep water has almost no red and is clearly blue; land, cloud and ice
-        // have plenty of red. Only water gets the per-zoom brightness match.
-        float ocean = (1.0 - smoothstep(0.004, 0.02, imagery.r)) * step(imagery.r * 3.0, imagery.b);
+        // Water has little red and is clearly blue (shallow turquoise seas
+        // included); land, cloud and ice have plenty of red, and dark forest
+        // isn't blue enough. Only water gets the brightness match.
+        float ocean = (1.0 - smoothstep(0.03, 0.08, imagery.r)) * step(imagery.r * 3.0, imagery.b);
         imagery *= mix(1.0, uOceanGain, ocean);
         vec3 day = uHasDay > 0.5
             ? imagery * RECIPROCAL_PI * (uSunIntensity * max(sunDot, 0.0) + uAmbient)
@@ -300,6 +358,7 @@ function requestLayer(key, layer, z, x, y, R) {
     loader.load(LAYERS[layer].url(z, x, y), bitmap => {
         inflight--;
         if (cache.get(key) !== entry) { bitmap.close(); return; } // evicted meanwhile
+        if (layer === 'day') entry.water = waterStats(bitmap);
         const tex = new THREE.Texture(bitmap);
         tex.flipY = false;
         tex.colorSpace = THREE.SRGBColorSpace;
@@ -366,7 +425,11 @@ export function updateEarthTiles(earthMesh, camera, renderer, enabled) {
         }
         const slot = entry.layers[layer];
         const u = entry.mesh.material.uniforms;
-        if (layer === 'day') { u.dayMap.value = slot.tex; u.uHasDay.value = 1; }
+        if (layer === 'day') {
+            u.dayMap.value = slot.tex; u.uHasDay.value = 1;
+            entry.oceanGain = matchedOceanGain(entry);
+            u.uOceanGain.value = entry.oceanGain;
+        }
         else if (layer === 'night') { u.streetMap.value = slot.tex; u.uHasNight.value = 1; }
         else { u.labelMap.value = slot.tex; u.uHasLabels.value = 1; }
         slot.state = 'ready';
