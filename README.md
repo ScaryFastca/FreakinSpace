@@ -69,7 +69,9 @@ no framework, no account.
   slides every planet and moon to its new distance while the camera holds still.
 
 ### Travel through time
-- Opens playing at about 1.4 hours per second, so you can see things move
+- Opens playing at about 43 minutes per second, so you can see things move;
+  picking the ISS slows the clock to 2 minutes per second, so Earth doesn't
+  race by below it
 - Pick any date, or run time forwards or backwards
 - Scroll anywhere over the time panel, or use − and +, to step through speeds from
   20 sec/s doubling up to a year per second (and the same in reverse). One-click

@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=203';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=203';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=204';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=204';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=203';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=203';
-import { initCheeseMoon } from './cheeseMoon.js?v=203';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=203';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=203';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=203';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=203';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=204';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=204';
+import { initCheeseMoon } from './cheeseMoon.js?v=204';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=204';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=204';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=204';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts } from './satellites.js?v=204';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=203';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=203';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=204';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=204';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -732,10 +732,13 @@ let simDate = new Date();           // Current simulation date/time
 let simSpeed = 0;                   // ms of sim time per ms of real time (0 = paused)
 let simPaused = true;               // Whether simulation is paused
 let timeScale = 1.0;                // Speed multiplier set by the slider
-// Starting speed: 5120 sim-seconds per second (≈1.4 hr/s, a rung of the speed
+// Starting speed: 2560 sim-seconds per second (≈43 min/s, a rung of the speed
 // ladder) is slow enough to follow and fast enough that a new visitor sees
 // planets, moons and satellites moving. The app opens playing at this speed.
-const DEFAULT_SIM_SPS = 5120;
+const DEFAULT_SIM_SPS = 2560;
+// Riding along with the ISS, Earth turning below at the default speed is
+// jarring; picking it slows the clock to this (never speeds it up)
+const ISS_VIEW_SPS = 120;   // 2 min/s
 let lastFrameTime = Date.now();     // For delta-time calculations
 let lastTimelineDisplayMinute = null;
 let realisticMoonPositionsDirty = true;
@@ -4215,6 +4218,11 @@ function finishEarthSurfaceCamera() {
 function focusOnBody(name) {
     const body = celestialBodies.get(name);
     if (!body) return;
+    // Picking the ISS slows time so Earth doesn't race by below it (the
+    // cheese tour sets its own speeds)
+    if (name === 'ISS' && !cheeseTour.active && !simPaused && Math.abs(currentSimSps()) > ISS_VIEW_SPS) {
+        setSimRateSps(Math.sign(currentSimSps()) * ISS_VIEW_SPS);
+    }
     satPan.offset.set(0, 0, 0);
     satPan.endValid = false;
     earthSpotFlight = null;
