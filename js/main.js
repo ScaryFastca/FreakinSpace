@@ -517,6 +517,7 @@ function calculateMoonLatitude(daysSinceJ2000) {
 // alignment epoch. Keep this calculation shared by rendering, scale changes,
 // and distance readouts so those paths cannot drift apart.
 function calculateAlignedOrbitAngle(bodyData) {
+    if (orbitalMode === 'custom') return customOrbitAngles[bodyData.name] ?? 0;
     const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
     const fallbackPeriod = bodyData.type === 'moon' ? 27.3 : 365.25;
     const period = bodyData.orbitalPeriod || fallbackPeriod;
@@ -617,7 +618,21 @@ let showOrbitLines = true;
 let currentZoomLevel = 'EARTH_MOON';
 let currentFocusedBody = null;
 let scaleMode = 'compressed'; // 'compressed' or 'realistic'
-let orbitalMode = 'aligned'; // 'aligned' or 'realistic' - controls planet positions
+let orbitalMode = 'aligned'; // aligned, realistic, custom
+const CUSTOM_ORBITS_KEY = 'spacemap-custom-orbits-v1';
+let customOrbitAngles = Object.create(null);
+try {
+    const saved = JSON.parse(localStorage.getItem(CUSTOM_ORBITS_KEY));
+    if (saved && typeof saved === 'object') {
+        for (const [name, angle] of Object.entries(saved)) {
+            if (typeof angle === 'number' && Number.isFinite(angle)) customOrbitAngles[name] = angle;
+        }
+    }
+} catch { /* Storage may be unavailable. Keep arrangements in memory. */ }
+let customOrbitDrag = null;
+function saveCustomOrbits() {
+    try { localStorage.setItem(CUSTOM_ORBITS_KEY, JSON.stringify(customOrbitAngles)); } catch { /* private mode */ }
+}
 let showHomeIndicator = true; // Toggle for home direction arrow
 let mikoIndicatorActive = false; // Konami-code easter egg: CodeMiko arrow on Uranus
 let showStars = true; // Background real-sky starfield
@@ -870,6 +885,7 @@ function getCurrentSpeedMultiplier() {
 }
 
 function getSimulationRate() {
+    if (orbitalMode === 'custom') return 0;
     // Aligned mode's 1× baseline is one simulated day per real second.
     return orbitalMode === 'aligned' ? timeScale * MS_PER_DAY : simSpeed;
 }
@@ -1501,6 +1517,7 @@ function init() {
     raycaster = new THREE.Raycaster();
     setupMagnifier();
     mouse = new THREE.Vector2();
+    setupCustomOrbitDrag(renderer.domElement);
     
     // UI
     document.getElementById('close-info').addEventListener('click', hideBodyInfo);
@@ -1759,7 +1776,7 @@ function init() {
         if (orbitalMode === 'aligned') {
             alignedStartDate = new Date(simDate.getTime());
             orbitGroups.forEach(group => { group.rotation.y = 0; });
-        } else {
+        } else if (orbitalMode === 'realistic') {
             updateRealisticPositions(simDate);
         }
         updateTimelineDisplay();
@@ -4043,7 +4060,7 @@ function animate() {
     // on it flew past the station. The shift it makes is kept by satPan
     controls.zoomToCursor = viewMode === 'map' && celestialBodies.get(currentFocusedBody)?.type === 'satellite';
     prepareEarthSurfaceCamera();
-    controls.update();
+    if (!customOrbitDrag?.moved) controls.update();
     finishEarthSurfaceCamera();
     if (satPan.valid && satPan.body === currentFocusedBody && !tourGlide) {
         addSatPanDelta(celestialBodies.get(currentFocusedBody), _satPanDelta.copy(controls.target).sub(satPan.setTarget));
@@ -5827,6 +5844,7 @@ let lastMouseY = -1;
 let isMouseOverUI = false;
 
 function updateHoverState(clientX, clientY) {
+    if (customOrbitDrag) return;
     // If the mouse is currently over a UI element, don't show object tooltips
     if (isMouseOverUI) {
         if (hoveredBody || hoveredOrbit || hoveredConstellation) {
@@ -7091,8 +7109,145 @@ function updateRealisticPositions(date, phase = 'all') {
     }
 }
 
+
+// Sample the same placement functions used by rendering, including the parent's
+// tilt/spin for moons. Restore the mesh so this calculation has no scene effects.
+function customOrbitFrame(body) {
+    const mesh = body.mesh;
+    const position = mesh.position.clone(), quaternion = mesh.quaternion.clone();
+    const point = angle => {
+        if (body.parent) placeMoon(body, angle, body.orbitRadius);
+        else orbitOffset(angle, body.orbitRadius, mesh.position);
+        return mesh.parent.localToWorld(mesh.position.clone());
+    };
+    const a = point(0), b = point(Math.PI), c = point(Math.PI / 2);
+    mesh.position.copy(position);
+    mesh.quaternion.copy(quaternion);
+    const center = a.clone().add(b).multiplyScalar(0.5);
+    return { center, x: a.sub(center), y: c.sub(center) };
+}
+
+function finishCustomOrbitDrag(cancel = false) {
+    const drag = customOrbitDrag;
+    if (!drag) return;
+    customOrbitDrag = null;
+    if (cancel) customOrbitAngles[drag.name] = drag.original;
+    else if (drag.moved) saveCustomOrbits();
+    controls.enabled = drag.controlsEnabled;
+    renderer.domElement.style.cursor = '';
+    if (renderer.domElement.hasPointerCapture(drag.pointerId)) renderer.domElement.releasePointerCapture(drag.pointerId);
+}
+
+function setupCustomOrbitDrag(canvas) {
+    canvas.addEventListener('pointerdown', event => {
+        if (customOrbitDrag || orbitalMode !== 'custom' || viewMode !== 'map'
+            || event.button !== 0 || event.isPrimary === false || event.ctrlKey || event.shiftKey || event.metaKey) return;
+        scene.updateMatrixWorld(true);
+        const pointer = new THREE.Vector2(event.clientX / window.innerWidth * 2 - 1, 1 - event.clientY / window.innerHeight * 2);
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(pointer, camera);
+        const meshes = Array.from(celestialBodies.values()).filter(b => b.mesh.visible).map(b => b.mesh);
+        const hits = ray.intersectObjects(meshes, true);
+        const radius = isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX;
+        const name = findTinyBodyInFront(event.clientX, event.clientY, radius, hits)
+            || (hits.length ? getBodyNameFromIntersection(hits[0]) : null)
+            || findNearestBodyOnScreen(event.clientX, event.clientY, celestialBodies, radius);
+        const body = celestialBodies.get(name);
+        if (!body || body.isDistant || !body.orbitRadius || !['planet', 'moon'].includes(body.data.type)) return;
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        customOrbitDrag = { name, body, pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+            original: customOrbitAngles[name] ?? 0, moved: false, controlsEnabled: controls.enabled };
+        controls.enabled = false;
+        activeTapPointerId = null;
+        canvas.setPointerCapture(event.pointerId);
+    }, { capture: true });
+    canvas.addEventListener('pointermove', event => {
+        const drag = customOrbitDrag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        if (orbitalMode !== 'custom' || viewMode !== 'map') { finishCustomOrbitDrag(true); return; }
+        if (!drag.moved) {
+            if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < (isCoarsePointerEvent(event) ? TOUCH_TAP_MOVE_TOLERANCE_PX : 5)) return;
+            drag.moved = true;
+            // Stop following the edited body so it can move across the screen.
+            currentFocusedBody = null;
+            flyToAnimation = null;
+            focusRetarget = null;
+            earthSpotFlight = null;
+            isCameraLocked = false;
+            cameraAngleLock = false;
+            document.getElementById('camera-lock-mode').textContent = 'Off';
+            hideTooltip();
+            canvas.style.cursor = 'grabbing';
+        }
+        const frame = customOrbitFrame(drag.body);
+        const previous = customOrbitAngles[drag.name];
+        const projected = new THREE.Vector3();
+        const distance = angle => {
+            projected.copy(frame.center).addScaledVector(frame.x, Math.cos(angle)).addScaledVector(frame.y, Math.sin(angle)).project(camera);
+            if (projected.z < -1 || projected.z > 1) return Infinity;
+            const dx = (projected.x + 1) * window.innerWidth / 2 - event.clientX;
+            const dy = (1 - projected.y) * window.innerHeight / 2 - event.clientY;
+            // Resolve overlapping front/back arcs in favour of the current angle.
+            const delta = Math.atan2(Math.sin(angle - previous), Math.cos(angle - previous));
+            return dx * dx + dy * dy + delta * delta * 0.1;
+        };
+        let angle = previous, best = distance(angle), step = Math.PI * 2 / 180;
+        for (let i = 0; i < 180; i++) {
+            const candidate = previous + i * step, score = distance(candidate);
+            if (score < best) { best = score; angle = candidate; }
+        }
+        for (let i = 0; i < 12; i++) {
+            const left = distance(angle - step), right = distance(angle + step);
+            if (left < best && left <= right) { angle -= step; best = left; }
+            else if (right < best) { angle += step; best = right; }
+            step /= 2;
+        }
+        customOrbitAngles[drag.name] = Math.atan2(Math.sin(angle), Math.cos(angle));
+    }, { capture: true });
+    canvas.addEventListener('pointerup', event => {
+        const drag = customOrbitDrag;
+        if (!drag || event.pointerId !== drag.pointerId) return;
+        event.stopImmediatePropagation();
+        finishCustomOrbitDrag();
+        if (!drag.moved) onClick(event);
+    }, { capture: true });
+    for (const type of ['pointercancel', 'lostpointercapture']) {
+        canvas.addEventListener(type, event => {
+            if (customOrbitDrag?.pointerId === event.pointerId) finishCustomOrbitDrag(true);
+        });
+    }
+    window.addEventListener('blur', () => finishCustomOrbitDrag(true));
+    window.addEventListener('keydown', event => {
+        if (event.key === 'Escape') finishCustomOrbitDrag(true);
+    });
+}
+
 function toggleOrbitalMode() {
-    orbitalMode = orbitalMode === 'aligned' ? 'realistic' : 'aligned';
+    finishCustomOrbitDrag(true);
+    const next = { aligned: 'realistic', realistic: 'custom', custom: 'aligned' }[orbitalMode];
+    if (next === 'custom') {
+        const d = (simDate - J2000) / MS_PER_DAY;
+        solarSystem.children.forEach(pd => {
+            if (!Number.isFinite(customOrbitAngles[pd.name])) {
+                const body = celestialBodies.get(pd.name);
+                customOrbitAngles[pd.name] = body?.orbitGroup?.rotation.y ?? 0;
+            }
+            (pd.children || []).forEach(md => {
+                if (!Number.isFinite(customOrbitAngles[md.name])) {
+                    customOrbitAngles[md.name] = md.name === 'Moon' ? calculateMoonAngle(d) : calculatePlanetAngle(md, d);
+                }
+            });
+        });
+        saveCustomOrbits();
+    }
+    orbitalMode = next;
+    document.getElementById('custom-orbit-hint').hidden = next !== 'custom';
+    document.getElementById('orbital-toggle').title = next === 'custom'
+        ? 'Drag planets and moons along their orbits. Click to switch to Aligned.'
+        : 'Cycle Aligned, Realistic, Custom';
     document.getElementById('orbital-mode').textContent = capitalize(orbitalMode);
 
     if (orbitalMode === 'realistic') {
@@ -7104,7 +7259,7 @@ function toggleOrbitalMode() {
         syncTimelineUI();
         updateRealisticPositions(simDate);
     } else {
-        // Aligned mode - reset all orbit groups to 0 rotation (planets aligned on x-axis)
+        // Circular modes use local orbital angles with unrotated orbit groups.
         simPaused = true;
         alignedStartDate = new Date(simDate.getTime());
         solarSystem.children.forEach(planetData => {
@@ -7118,8 +7273,8 @@ function toggleOrbitalMode() {
     // Sync speed labels/modes
     syncTimelineUI();
 
-    // Refocus on current body if there is one
-    if (currentFocusedBody) {
+    // Custom editing keeps the current camera framing.
+    if (orbitalMode !== 'custom' && currentFocusedBody) {
         focusOnBody(currentFocusedBody);
     }
 }
@@ -7168,6 +7323,10 @@ function updateTimelineDisplay(force = false) {
 }
 
 function syncTimelineUI() {
+    if (orbitalMode === 'custom') simPaused = true;
+    document.querySelectorAll('#tl-controls-slider-row button, #tl-speed-slider, #tl-presets button').forEach(el => {
+        el.disabled = orbitalMode === 'custom';
+    });
     updateSpeedPresetHighlight();
     // Sync play/pause button
     const playBtn = document.getElementById('tl-play-pause');
@@ -7177,7 +7336,7 @@ function syncTimelineUI() {
     const speedLabel = document.getElementById('tl-speed-label');
     if (speedLabel) {
         if (simPaused) {
-            speedLabel.textContent = 'Paused';
+            speedLabel.textContent = orbitalMode === 'custom' ? 'Custom · fixed orbits' : 'Paused';
         } else {
             speedLabel.textContent = formatSimRate(getSimulationRate() / MS_PER_DAY);
         }
@@ -7322,6 +7481,7 @@ function applyViewModeFromUrl() {
 }
 
 function toggleViewMode(e, updateHistory = true) {
+    finishCustomOrbitDrag(true);
     if (e && e.preventDefault) {
         e.preventDefault();
     }

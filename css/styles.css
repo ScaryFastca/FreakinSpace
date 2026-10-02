@@ -2276,3 +2276,17 @@ body.ui-hidden #ui-container * {
     transition: opacity 0.4s ease;
 }
 #ui-hidden-hint.show { opacity: 1; }
+
+/* Custom orbital editing hint sits on its own row in the settings tray. */
+#custom-orbit-hint {
+    flex-basis: 100%;
+    order: 20;
+    text-align: center;
+    color: #b9d7f5;
+    font-size: 0.75rem;
+    padding: 4px 10px;
+}
+#tl-controls-slider-row button:disabled, #tl-speed-slider:disabled, #tl-presets button:disabled {
+    opacity: 0.45;
+    cursor: default;
+}

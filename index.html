@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=29">
+    <link rel="stylesheet" href="css/styles.css?v=30">
     <script type="importmap">
     {
         "imports": {
@@ -140,10 +140,11 @@
                 <span class="toggle-label">Cam moves with object:</span>
                 <span id="camera-lock-mode">On</span>
             </button>
-            <button id="orbital-toggle" class="toggle-btn">
+            <button id="orbital-toggle" class="toggle-btn" title="Cycle Aligned, Realistic, Custom">
                 <span class="toggle-label">Solar System:</span>
                 <span id="orbital-mode">Aligned</span>
             </button>
+            <span id="custom-orbit-hint" hidden role="status">Drag planets or moons along their orbits · Esc cancels</span>
             <!-- Stars menu: opens on hover (mouse) or tap (touch) -->
             <div class="popup-menu" id="stars-menu">
                 <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
@@ -334,6 +335,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=227"></script>
+    <script type="module" src="js/main.js?v=228"></script>
 </body>
 </html>

@@ -28,8 +28,11 @@ no framework, no account.
 
 ### Explore the Solar System
 - The Sun, all eight planets and their major moons, using real NASA-derived surface maps
-- Two orbit modes: **Aligned** for a tidy overview, or **Realistic**, which places
-  every planet where it is on any date, based on JPL orbital elements
+- Three orbit modes: **Aligned** for a tidy overview, **Realistic** for positions
+  on any date based on JPL orbital elements, and **Custom** to drag planets and
+  moons along their circular orbits. Custom positions stay fixed and are saved
+  in your browser; moving a planet carries its moons with it. Tap to select,
+  drag to reposition, or press Escape during a drag to cancel.
 - Two scale modes: **Compressed** so everything fits on screen, or **Realistic**
   spacing, where moons sit at their true distance (the Moon is 60 Earth radii out)
 - Realistic orbits are true tilted ellipses (JPL Keplerian elements), so Mercury
