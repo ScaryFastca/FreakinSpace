@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=245';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=245';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=246';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=246';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=245';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=245';
-import { initCheeseMoon } from './cheeseMoon.js?v=245';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=245';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=245';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=245';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=245';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=245';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=246';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=246';
+import { initCheeseMoon } from './cheeseMoon.js?v=246';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=246';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=246';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=246';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=246';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=246';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=245';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=245';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=246';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=246';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -704,14 +704,20 @@ function getPulledRef() {
 // 0.1·sv + 0.9·sv⁴: ~0.15 at Compressed (still pulled in), 1 at Realistic,
 // and never flat, so objects move from the first nudge off Max
 const PULL_W = sv => 0.1 * sv + 0.9 * sv * sv * sv * sv;
-function pulledPositions(sv, systemEdge) {
+// "Pull far objects in" only ever pulls in: each object goes to the nearer
+// of its pulled spot and its normal one (linearU = the normal layout's units
+// per ly). The pulled field is scaled so the giants clear the Solar System,
+// which on its own carried near stars like Alpha Centauri up to 5× further
+// out than with the toggle off. The two maps cross around 100 ly at Max, so
+// near stars keep their normal places and the far ones are squeezed.
+function pulledPositions(sv, systemEdge, linearU = Infinity) {
     const ref = getPulledRef();
     const w = PULL_W(THREE.MathUtils.clamp(sv, 0, 1));
     return getStarLayoutInfo().map((st, i) => {
         const r0 = Math.max(ref.P[i].length(), 1e-6);
         const r1 = Math.max(st.distLy * STAR_UNITS_PER_LY_REALISTIC, r0);
         const r = Math.max(r0 * Math.pow(r1 / r0, w), 1.2 * (systemEdge + st.ext));
-        return st.dir.clone().multiplyScalar(r);
+        return st.dir.clone().multiplyScalar(Math.min(r, st.distLy * linearU));
     });
 }
 // With realistic distances the stars are always realistic; the Stars menu's
@@ -6418,7 +6424,7 @@ function applyLayout(layout) {
     // Stars: true-distance layout, pulled-in layout, or a blend between them
     // (distance geometric, direction interpolated) set by the slider position
     const blend = layout.starBlend || 0;
-    const pulledTargets = blend > 0 ? pulledPositions(layout.sv ?? scaleValue, layout.systemEdge) : null;
+    const pulledTargets = blend > 0 ? pulledPositions(layout.sv ?? scaleValue, layout.systemEdge, layout.starU) : null;
     getStarLayoutInfo().forEach((st, i) => {
         const pos = st.body.mesh.position;
         _starLinear.copy(st.posLy).multiplyScalar(layout.starU);

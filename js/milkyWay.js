@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=245';
+import { raDecToAppFrame } from './celestialData.js?v=246';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing
@@ -209,7 +209,7 @@ const vertexShader = /* glsl */`
         float L = d <= uD0 ? d : uD0 * (1.0 + log(d / uD0));
         float r0 = max(L * uU0, 1e-6);
         float r1 = max(d * uTrueU, r0);
-        float pulled = r0 * pow(r1 / r0, uW);
+        float pulled = min(r0 * pow(r1 / r0, uW), lin); // pull-in never pushes out
         return lin * pow(pulled / max(lin, 1e-6), uBlend);
     }
 
@@ -319,7 +319,7 @@ function mapDistLy(d, m) {
     const L = d <= m.d0 ? d : m.d0 * (1 + Math.log(d / m.d0));
     const r0 = Math.max(L * m.u0, 1e-6);
     const r1 = Math.max(d * m.trueU, r0);
-    const pulled = r0 * Math.pow(r1 / r0, m.w);
+    const pulled = Math.min(r0 * Math.pow(r1 / r0, m.w), lin); // pull-in never pushes out
     return lin * Math.pow(pulled / Math.max(lin, 1e-6), m.blend);
 }
 
