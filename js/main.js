@@ -1,18 +1,18 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=227';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=227';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=230';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=230';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=227';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=227';
-import { initCheeseMoon } from './cheeseMoon.js?v=227';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=227';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=227';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=227';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=227';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=230';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=230';
+import { initCheeseMoon } from './cheeseMoon.js?v=230';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=230';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=230';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=230';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=230';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=227';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=227';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=230';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=230';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1522,7 +1522,15 @@ function init() {
     // UI
     document.getElementById('close-info').addEventListener('click', hideBodyInfo);
     document.getElementById('camera-lock-toggle').addEventListener('click', toggleCameraLock);
-    document.getElementById('orbital-toggle').addEventListener('click', toggleOrbitalMode);
+    document.querySelectorAll('input[name="orbit-mode"]').forEach(r =>
+        r.addEventListener('change', () => { if (r.checked) setOrbitalMode(r.value); }));
+    // Back to the lined-up layout, ready to drag from
+    document.getElementById('custom-orbit-reset').addEventListener('click', () => {
+        finishCustomOrbitDrag(true);
+        for (const name of Object.keys(customOrbitAngles)) delete customOrbitAngles[name];
+        if (orbitalMode === 'custom') { seedCustomOrbits(); saveCustomOrbits(); }
+        else setOrbitalMode('custom');
+    });
     document.getElementById('home-indicator-toggle').addEventListener('click', toggleHomeIndicator);
     setSatelliteStatusListener(problems => {
         const btn = document.getElementById('satellites-toggle');
@@ -7225,29 +7233,27 @@ function setupCustomOrbitDrag(canvas) {
     });
 }
 
-function toggleOrbitalMode() {
-    finishCustomOrbitDrag(true);
-    const next = { aligned: 'realistic', realistic: 'custom', custom: 'aligned' }[orbitalMode];
-    if (next === 'custom') {
-        const d = (simDate - J2000) / MS_PER_DAY;
-        solarSystem.children.forEach(pd => {
-            if (!Number.isFinite(customOrbitAngles[pd.name])) {
-                const body = celestialBodies.get(pd.name);
-                customOrbitAngles[pd.name] = body?.orbitGroup?.rotation.y ?? 0;
-            }
-            (pd.children || []).forEach(md => {
-                if (!Number.isFinite(customOrbitAngles[md.name])) {
-                    customOrbitAngles[md.name] = md.name === 'Moon' ? calculateMoonAngle(d) : calculatePlanetAngle(md, d);
-                }
-            });
+// Anything without a saved Custom spot starts lined up, as in Aligned
+// (starting from the real positions made a tidy arrangement harder)
+function seedCustomOrbits() {
+    solarSystem.children.forEach(pd => {
+        if (!Number.isFinite(customOrbitAngles[pd.name])) customOrbitAngles[pd.name] = 0;
+        (pd.children || []).forEach(md => {
+            if (!Number.isFinite(customOrbitAngles[md.name])) customOrbitAngles[md.name] = 0;
         });
+    });
+}
+
+function setOrbitalMode(next) {
+    finishCustomOrbitDrag(true);
+    document.querySelectorAll('input[name="orbit-mode"]').forEach(r => { r.checked = r.value === next; });
+    if (next === orbitalMode) return;
+    if (next === 'custom') {
+        seedCustomOrbits();
         saveCustomOrbits();
     }
     orbitalMode = next;
     document.getElementById('custom-orbit-hint').hidden = next !== 'custom';
-    document.getElementById('orbital-toggle').title = next === 'custom'
-        ? 'Drag planets and moons along their orbits. Click to switch to Aligned.'
-        : 'Cycle Aligned, Realistic, Custom';
     document.getElementById('orbital-mode').textContent = capitalize(orbitalMode);
 
     if (orbitalMode === 'realistic') {
@@ -9859,7 +9865,7 @@ function flyToEarth(showEarthInfo = false) {
 
 // Bump the version suffix to re-show the notice to everyone after a big change
 const BETA_NOTICE_KEY = 'betaNoticeDismissed:v1';
-const CONTROLS_INFO_VISIBLE_MS = 8000;
+const CONTROLS_INFO_VISIBLE_MS = 5000;
 
 function setupControlsInfo() {
     const panel = document.getElementById('controls-info');
@@ -9887,6 +9893,11 @@ function setupControlsInfo() {
     showButton.addEventListener('click', (event) => {
         event.stopPropagation();
         showControls();
+    });
+    document.getElementById('controls-info-close')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        clearTimeout(minimizeTimer);
+        minimizeControls();
     });
 
     showControls();

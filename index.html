@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>SpaceMap - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=30">
+    <link rel="stylesheet" href="css/styles.css?v=32">
     <script type="importmap">
     {
         "imports": {
@@ -43,6 +43,7 @@
         </div>
         
         <div id="controls-info">
+            <button id="controls-info-close" type="button" aria-label="Hide controls" title="Hide">×</button>
             <div class="control-hint">
                 <span class="key">Drag</span> to rotate
             </div>
@@ -140,10 +141,21 @@
                 <span class="toggle-label">Cam moves with object:</span>
                 <span id="camera-lock-mode">On</span>
             </button>
-            <button id="orbital-toggle" class="toggle-btn" title="Cycle Aligned, Realistic, Custom">
-                <span class="toggle-label">Solar System:</span>
-                <span id="orbital-mode">Aligned</span>
-            </button>
+            <!-- Solar System menu: pick how planets are placed -->
+            <div class="popup-menu" id="orbital-menu">
+                <button id="orbital-toggle" class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
+                    <span class="toggle-label">Solar System:</span>
+                    <span id="orbital-mode">Aligned</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel" role="menu">
+                    <label class="popup-row"><input type="radio" name="orbit-mode" value="aligned" checked> Aligned <span class="popup-hint">lined up, tidy overview</span></label>
+                    <label class="popup-row"><input type="radio" name="orbit-mode" value="realistic"> Realistic <span class="popup-hint">real positions on the date</span></label>
+                    <label class="popup-row"><input type="radio" name="orbit-mode" value="custom"> Custom <span class="popup-hint">drag them where you like</span></label>
+                    <div class="popup-heading"></div>
+                    <button type="button" class="popup-row popup-action" id="custom-orbit-reset">Line them all up <span class="popup-hint">resets Custom</span></button>
+                </div>
+            </div>
             <span id="custom-orbit-hint" hidden role="status">Drag planets or moons along their orbits · Esc cancels</span>
             <!-- Stars menu: opens on hover (mouse) or tap (touch) -->
             <div class="popup-menu" id="stars-menu">
@@ -335,6 +347,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=228"></script>
+    <script type="module" src="js/main.js?v=230"></script>
 </body>
 </html>

@@ -590,6 +590,24 @@ body {
     left: 44px;
 }
 
+#controls-info-close {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: none;
+    color: #88aaff;
+    font-size: 18px;
+    line-height: 22px;
+    cursor: pointer;
+}
+#controls-info-close:hover,
+#controls-info-close:focus-visible { color: #fff; background: rgba(74, 158, 255, 0.2); }
+
 #controls-info.minimized {
     opacity: 0;
     visibility: hidden;
@@ -2208,6 +2226,7 @@ body.ui-hidden #magnifier { display: none; }
     border-radius: 6px;
 }
 .popup-row:hover { background: rgba(74, 158, 255, 0.15); }
+.popup-action { width: 100%; background: none; border: 0; font: inherit; text-align: left; }
 .popup-row input { accent-color: #4a9eff; margin: 0; }
 .popup-hint { color: #88aaff; font-size: 0.72rem; }
 .popup-heading {
