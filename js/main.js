@@ -1,18 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=230';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=230';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=245';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=245';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=230';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=230';
-import { initCheeseMoon } from './cheeseMoon.js?v=230';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=230';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=230';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=230';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=230';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=245';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=245';
+import { initCheeseMoon } from './cheeseMoon.js?v=245';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=245';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=245';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=245';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=245';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=245';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=230';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=230';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=245';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=245';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -636,6 +637,19 @@ function saveCustomOrbits() {
 let showHomeIndicator = true; // Toggle for home direction arrow
 let mikoIndicatorActive = false; // Konami-code easter egg: CodeMiko arrow on Uranus
 let showStars = true; // Background real-sky starfield
+let showMilkyWay = true; // 3D Milky Way disk (fades in as you leave the Solar System)
+let milkyWay = null;
+let milkyWayBody = null; // hover/click stand-in when the whole galaxy is a dot on screen
+const MILKY_WAY_DATA = {
+    name: 'Milky Way',
+    type: 'galaxy',
+    subtype: 'Barred spiral',
+    mass: '1.5 × 10¹² Solar masses',
+    temperature: '100–400 billion stars',
+    description: 'Our home galaxy, about 100,000 light-years across. The Sun sits in the Orion Spur, 26,700 light-years from the central black hole Sagittarius A*.'
+};
+// Below this on-screen radius the galaxy is picked as one object
+const MILKY_WAY_PICK_MAX_PX = 40;
 let showBigStars = true; // Named star systems (Betelgeuse, Sirius…) as 3D objects
 // Star distances, in scene units per light year. Separate from the planet
 // Scale toggle. "Far" pushes the big stars out so they read as distant points.
@@ -1388,7 +1402,7 @@ function init() {
     // Camera setup - start with solar system overview
     const aspect = window.innerWidth / window.innerHeight;
     // Massive Far plane needed for True Scale comparison view (millions of units)
-    camera = new THREE.PerspectiveCamera(60, aspect, 0.1, 10000000000); 
+    camera = new THREE.PerspectiveCamera(60, aspect, 0.1, CAMERA_BASE_FAR); 
     camera.layers.enable(ORBIT_LAYER); // orbit lines (toggled with Q)
     // Note: With such a large range (0.1 to 10B), we should use logarithmicDepthBuffer in renderer
 
@@ -1495,9 +1509,12 @@ function init() {
     }
     setupStellarReferenceMeshes();
     createStarField();
+    milkyWay = createMilkyWay();
+    scene.add(milkyWay);
+    milkyWayBody = { mesh: milkyWay, data: MILKY_WAY_DATA, type: 'galaxy', isDistant: true };
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, focusOnBody, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
 
     // Spacetime grid removed
 
@@ -3561,6 +3578,7 @@ function animate() {
 
         starField.scale.setScalar(currentStarFieldScale);
     }
+    updateMilkyWayDisk();
 
     // Update spacetime fabric with gravity wells block REMOVED
 
@@ -4310,7 +4328,9 @@ function renderMagnifier() {
     renderer.setScissorTest(true);
     renderer.setScissor(left, y, size, size);
     renderer.setViewport(left, y, size, size);
+    if (milkyWay) suspendMilkyWayFan(milkyWay, true); // the fan follows the main view's cursor
     renderer.render(scene, cam);
+    if (milkyWay) suspendMilkyWayFan(milkyWay, false);
     renderer.setScissorTest(false);
     renderer.setViewport(_magViewport);
     magnifier.spikes.forEach((o, i) => o.scale.setScalar(spikeScales[i]));
@@ -4401,6 +4421,7 @@ function prepareEarthSurfaceCamera() {
 // Runs once per frame after the camera's final position is known (including
 // the Earth close-up camera's altitude remap), so it covers that mode too.
 const _nearBodyPos = new THREE.Vector3();
+const CAMERA_BASE_FAR = 1e10;
 function updateNearPlaneForFocus() {
     // Nearest thing that could be clipped: the focus point, or the surface of
     // any Solar System body. Using only the focus distance clipped Earth away
@@ -4416,8 +4437,13 @@ function updateNearPlaneForFocus() {
         });
     }
     const near = THREE.MathUtils.clamp(Math.max(nearest, 0) * 0.05, 1e-6, 0.1);
-    if (Math.abs(near - camera.near) > near * 0.05) {
+    // Far plane: out at a distant galaxy (M87* is ~10¹¹ units away at
+    // Compressed) a fixed far plane clipped home, the Milky Way and everything
+    // near it. Keep three times the camera's distance from the Sun in range.
+    const far = Math.max(CAMERA_BASE_FAR, camera.position.length() * 3);
+    if (Math.abs(near - camera.near) > near * 0.05 || Math.abs(far - camera.far) > far * 0.05) {
         camera.near = near;
+        camera.far = far;
         camera.updateProjectionMatrix();
     }
 }
@@ -5040,6 +5066,16 @@ function isCoarsePointerEvent(event) {
 }
 
 function onClick(event) {
+    if (milkyWayUnderPointer(event.clientX, event.clientY,
+        isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX)) {
+        focusOnMilkyWay();
+        return;
+    }
+    if (solarSystemUnderPointer(event.clientX, event.clientY,
+        isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX)) {
+        focusOnBody('Solar System');
+        return;
+    }
 
     const mouse = new THREE.Vector2();
     mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
@@ -5517,19 +5553,36 @@ function drawGuideLine() {
     const startX = itemRect.right;
     const startY = itemRect.top + itemRect.height / 2;
     
-    // Get the object's 3D position in screen space
-    const worldPosition = new THREE.Vector3();
-    body.mesh.getWorldPosition(worldPosition);
-    worldPosition.project(camera);
-    
-    // Check if object is behind the camera
-    if (worldPosition.z > 1) {
-        guideLineCtx.clearRect(0, 0, guideLineCanvas.width, guideLineCanvas.height);
-        return;
+    // Where the object is on screen, worked out in camera space: projecting
+    // with the camera's matrix dropped anything past the far plane (M87*,
+    // TON 618… from home) and anything behind you, so no line appeared.
+    // Off screen, the line runs to the screen edge in the object's direction
+    // and the arrow points the way to turn.
+    const v = body.mesh.getWorldPosition(new THREE.Vector3()).applyMatrix4(camera.matrixWorldInverse);
+    const W = window.innerWidth, H = window.innerHeight;
+    const P = camera.projectionMatrix.elements;
+    let endX, endY, onScreen = false, edgeDir = null;
+    if (v.z < 0) {
+        endX = (P[0] * v.x / -v.z * 0.5 + 0.5) * W;
+        endY = (-P[5] * v.y / -v.z * 0.5 + 0.5) * H;
+        onScreen = endX >= 0 && endX <= W && endY >= 0 && endY <= H;
     }
-    
-    const endX = (worldPosition.x * 0.5 + 0.5) * window.innerWidth;
-    const endY = (-worldPosition.y * 0.5 + 0.5) * window.innerHeight;
+    if (!onScreen) {
+        // Direction from the screen centre (straight behind: point down)
+        let dx = v.x * P[0], dy = -v.y * P[5];
+        if (Math.hypot(dx, dy) < 1e-9) { dx = 0; dy = 1; }
+        // Edge of the visible area right of the sidebar, inset so the arrow
+        // stays clear; aimed from the middle of that area
+        const m = 40;
+        const left = Math.min(startX + 60, W / 2), right = W - m, top = m, bottom = H - m;
+        const cx = (left + right) / 2, cy = H / 2;
+        const t = Math.min((dx > 0 ? right - cx : cx - left) / Math.max(Math.abs(dx), 1e-9),
+            (bottom - top) / 2 / Math.max(Math.abs(dy), 1e-9));
+        endX = cx + dx * t;
+        endY = cy + dy * t;
+        const len = Math.hypot(dx, dy);
+        edgeDir = { x: dx / len, y: dy / len };
+    }
     
     // Clear canvas
     guideLineCtx.clearRect(0, 0, guideLineCanvas.width, guideLineCanvas.height);
@@ -5557,8 +5610,9 @@ function drawGuideLine() {
     // Use two control points for smooth bezier curve from horizontal start
     const cp1x = firstPointX + (endX - firstPointX) * 0.5;
     const cp1y = startY;
-    const cp2x = firstPointX + (endX - firstPointX) * 0.5;
-    const cp2y = endY;
+    // (off screen: arrive heading outward, so the arrow says "this way")
+    const cp2x = edgeDir ? endX - edgeDir.x * 120 : firstPointX + (endX - firstPointX) * 0.5;
+    const cp2y = edgeDir ? endY - edgeDir.y * 120 : endY;
     
     guideLineCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, endX, endY);
     guideLineCtx.stroke();
@@ -5589,12 +5643,14 @@ function drawGuideLine() {
     );
     guideLineCtx.stroke();
     
-    // Draw pulsing circle at object location
-    const pulse = (Math.sin(Date.now() / 200) + 1) / 2; // 0 to 1
-    guideLineCtx.beginPath();
-    guideLineCtx.arc(endX, endY, 8 + pulse * 4, 0, Math.PI * 2);
-    guideLineCtx.fillStyle = `rgba(74, 158, 255, ${0.5 + pulse * 0.3})`;
-    guideLineCtx.fill();
+    // Draw pulsing circle at object location (not at the edge marker)
+    if (onScreen) {
+        const pulse = (Math.sin(Date.now() / 200) + 1) / 2; // 0 to 1
+        guideLineCtx.beginPath();
+        guideLineCtx.arc(endX, endY, 8 + pulse * 4, 0, Math.PI * 2);
+        guideLineCtx.fillStyle = `rgba(74, 158, 255, ${0.5 + pulse * 0.3})`;
+        guideLineCtx.fill();
+    }
     
     guideLineCtx.restore();
 }
@@ -5865,6 +5921,33 @@ function updateHoverState(clientX, clientY) {
             hideTooltip();
         }
         return;
+    }
+
+    if (milkyWayUnderPointer(clientX, clientY, MOUSE_BODY_HIT_RADIUS_PX)) {
+        if (hoveredBody !== milkyWayBody) {
+            hoveredBody = milkyWayBody;
+            hoveredOrbit = null;
+            hoveredConstellation = null;
+            orbitLines.forEach(obj => { obj.visible.material.opacity = 0.2; });
+            showTooltip(MILKY_WAY_DATA, clientX, clientY);
+        } else {
+            updateTooltipPosition(clientX, clientY);
+        }
+        return;
+    }
+    if (solarSystemUnderPointer(clientX, clientY, MOUSE_BODY_HIT_RADIUS_PX)) {
+        const ss = celestialBodies.get('Solar System');
+        if (ss && hoveredBody !== ss) {
+            ss.mesh.userData.previewRadius = currentSystemEdge; // magnifier framing
+            hoveredBody = ss;
+            hoveredOrbit = null;
+            hoveredConstellation = null;
+            orbitLines.forEach(obj => { obj.visible.material.opacity = 0.2; });
+            showTooltip(ss.data, clientX, clientY);
+        } else if (ss) {
+            updateTooltipPosition(clientX, clientY);
+        }
+        if (ss) return;
     }
 
     // Update mouse coordinates
@@ -7157,6 +7240,8 @@ function setupCustomOrbitDrag(canvas) {
         const meshes = Array.from(celestialBodies.values()).filter(b => b.mesh.visible).map(b => b.mesh);
         const hits = ray.intersectObjects(meshes, true);
         const radius = isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX;
+        if (milkyWayUnderPointer(event.clientX, event.clientY, radius)
+            || solarSystemUnderPointer(event.clientX, event.clientY, radius)) return;
         const name = findTinyBodyInFront(event.clientX, event.clientY, radius, hits)
             || (hits.length ? getBodyNameFromIntersection(hits[0]) : null)
             || findNearestBodyOnScreen(event.clientX, event.clientY, celestialBodies, radius);
@@ -7374,6 +7459,112 @@ function toggleShowStars() {
     syncStarsMenu();
 }
 
+// Place the Milky Way on Sgr A* (wherever the current scale puts it) and fade
+// it with the camera's distance from the Sun
+const _galCenter = new THREE.Vector3(), _drawSize = new THREE.Vector2();
+function updateMilkyWayDisk() {
+    if (!milkyWay) return;
+    const sgr = celestialBodies.get('Sagittarius A*');
+    if (!showMilkyWay || viewMode !== 'map' || !sgr) { milkyWay.visible = false; return; }
+    sgr.mesh.getWorldPosition(_galCenter);
+    renderer.getDrawingBufferSize(_drawSize);
+    const pxPerUnit = _drawSize.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
+    const focusDist = camera.position.distanceTo(controls.target);
+    // Cursor for the particle fan (device px, GL origin bottom-left)
+    const dpr = renderer.getPixelRatio();
+    const pointer = {
+        x: lastMouseX * dpr, y: (window.innerHeight - lastMouseY) * dpr, dpr,
+        viewW: _drawSize.x, viewH: _drawSize.y,
+        inside: lastMouseX >= 0 && pointerInWindow && !isMouseOverUI && !HOVER_NONE_MQ.matches
+    };
+    milkyWay.visible = updateMilkyWay(milkyWay, _galCenter, camera.position, pxPerUnit, focusDist, pointer,
+        milkyWayDistanceMap()) > 0.001;
+}
+
+// How the stars' distances are laid out right now, so the disk can be warped
+// the same way: with "Pull far objects in" a star at 18,900 ly (Stephenson
+// 2-18) lands almost as far out as the centre at 26,700 ly, and an unwarped
+// disk would leave it floating outside the galaxy. See pulledPositions().
+let _mwPullConst = null;
+function milkyWayDistanceMap() {
+    if (!_mwPullConst) {
+        const info = getStarLayoutInfo();
+        _mwPullConst = {
+            u0: computeRawScaleLayout(0, true).starU,
+            d0: Math.min(...info.filter(st => st.distLy > 1e-6).map(st => st.distLy))
+        };
+    }
+    return {
+        starU: currentStarUnitsPerLy, blend: currentStarBlend,
+        w: PULL_W(THREE.MathUtils.clamp(currentSv, 0, 1)),
+        u0: _mwPullConst.u0, d0: _mwPullConst.d0, trueU: STAR_UNITS_PER_LY_REALISTIC
+    };
+}
+let pointerInWindow = true;
+document.addEventListener('mouseout', e => { if (!e.relatedTarget) pointerInWindow = false; });
+document.addEventListener('mouseover', () => { pointerInWindow = true; });
+
+// From far enough away (M87*, the distant quasars) the whole galaxy is a few
+// pixels and everything in it (the Solar System, Voyager, Eris…) sits on the
+// same spot. Pointing there means the Milky Way.
+const _mwScreen = new THREE.Vector3();
+// On-screen radius of the whole disk in CSS px (Infinity when not shown)
+function milkyWayScreenRadius() {
+    if (viewMode !== 'map' || !milkyWay?.visible) return Infinity;
+    milkyWay.getWorldPosition(_mwScreen);
+    const dist = camera.position.distanceTo(_mwScreen);
+    return milkyWay.userData.previewRadius * (window.innerHeight / 2)
+        / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
+}
+
+function milkyWayUnderPointer(clientX, clientY, radiusPx) {
+    const screenR = milkyWayScreenRadius();
+    if (screenR > MILKY_WAY_PICK_MAX_PX) return false;
+    milkyWay.getWorldPosition(_mwScreen);
+    _mwScreen.project(camera);
+    if (_mwScreen.z < -1 || _mwScreen.z > 1) return false;
+    const x = (_mwScreen.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-_mwScreen.y * 0.5 + 0.5) * window.innerHeight;
+    return Math.hypot(clientX - x, clientY - y) <= Math.max(screenR, radiusPx);
+}
+
+// Same idea one level down: once the whole Solar System (out to the last
+// planet's system) is a dot, pointing at it means the Solar System, not
+// whichever spacecraft or comet happens to project nearest the cursor
+const SOLAR_SYSTEM_PICK_MAX_PX = 40;
+const _ssScreen = new THREE.Vector3();
+function solarSystemUnderPointer(clientX, clientY, radiusPx) {
+    if (viewMode !== 'map' || !(currentSystemEdge > 0)) return false;
+    const dist = camera.position.length(); // the Sun is at the origin
+    const screenR = currentSystemEdge * (window.innerHeight / 2)
+        / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
+    if (screenR > SOLAR_SYSTEM_PICK_MAX_PX) return false;
+    _ssScreen.set(0, 0, 0).project(camera);
+    if (_ssScreen.z < -1 || _ssScreen.z > 1) return false;
+    const x = (_ssScreen.x * 0.5 + 0.5) * window.innerWidth;
+    const y = (-_ssScreen.y * 0.5 + 0.5) * window.innerHeight;
+    return Math.hypot(clientX - x, clientY - y) <= Math.max(screenR, radiusPx);
+}
+
+// Fly out to a three-quarter view of the whole disk, from the side you're on
+function focusOnMilkyWay() {
+    const center = milkyWay.getWorldPosition(new THREE.Vector3());
+    const north = new THREE.Vector3().setFromMatrixColumn(milkyWay.userData.basis, 2).normalize();
+    const toCam = camera.position.clone().sub(center).normalize();
+    if (toCam.dot(north) < 0) north.negate();
+    const dir = toCam.lerp(north, 0.75).normalize();
+    const endPos = center.clone().addScaledVector(dir, milkyWay.userData.previewRadius * 2.6);
+    currentFocusedBody = null;
+    updateSidebarSelection(null);
+    flyToAnimation = createInterstellarFlight(endPos, center, null, { duration: 4000 });
+    showBodyInfo(MILKY_WAY_DATA);
+}
+
+function toggleMilkyWay() {
+    showMilkyWay = !showMilkyWay;
+    syncStarsMenu();
+}
+
 function toggleBigStars() {
     showBigStars = !showBigStars;
     updateZoomLevel(); // re-evaluate visibility of the named star systems
@@ -7416,6 +7607,7 @@ function updateConstellationIntro() {
 function syncStarsMenu() {
     const set = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
     set('menu-background-stars', showStars);
+    set('menu-milky-way', showMilkyWay);
     set('menu-big-stars', showBigStars);
     set('menu-constellations', showConstellations);
     set('menu-pull-far-stars', pullFarStars);
@@ -7427,7 +7619,7 @@ function syncStarsMenu() {
     const pullNote = document.getElementById('pull-far-note');
     if (pullNote) pullNote.textContent = scaleMode === 'realistic'
         ? 'Realistic scale always shows true distances; pick Compressed or Max to pull far objects in'
-        : 'Brings giant stars, galaxies and quasars in close for comparing (distances squeezed logarithmically; nothing overlaps)';
+        : 'Brings giant stars, galaxies and quasars in close for comparing (distances squeezed logarithmically; nothing overlaps). The 3D Milky Way is hidden while it’s on';
     // Pulling far objects in replaces the star-scale choice
     const locked = scaleMode === 'realistic' || starsPulledInNow;
     document.querySelectorAll('input[name="star-scale"]').forEach(r => {
@@ -7437,10 +7629,6 @@ function syncStarsMenu() {
     });
     const note = document.getElementById('star-scale-note');
     if (note) note.hidden = !(scaleMode === 'realistic');
-    const summary = document.getElementById('stars-menu-summary');
-    if (summary) summary.textContent = starsPulledInNow
-        ? 'pulled in'
-        : STAR_SCALES[effectiveStarScale()].label.replace('Compressed ', '').replace(/[()]/g, '');
 }
 
 // Hover opens on devices with a mouse; click/tap toggles everywhere (phones)
@@ -7462,6 +7650,7 @@ function setupPopupMenus() {
         document.addEventListener('click', () => setOpen(false));
     });
     document.getElementById('menu-background-stars')?.addEventListener('change', toggleShowStars);
+    document.getElementById('menu-milky-way')?.addEventListener('change', toggleMilkyWay);
     document.getElementById('menu-big-stars')?.addEventListener('change', toggleBigStars);
     document.getElementById('menu-constellations')?.addEventListener('change', toggleConstellations);
     document.querySelectorAll('input[name="star-scale"]').forEach(r =>
@@ -8114,7 +8303,10 @@ function updateHomeIndicator() {
 
     // Format distance appropriately
     let distanceText;
-    const isSolarSystemView = !(currentFocusedBody && celestialBodies.get(currentFocusedBody) && celestialBodies.get(currentFocusedBody).isDistant);
+    // (the "Solar System" marker counts as distant for layout, but its view is
+    // of the planets: km / AU, not "0.0 Ly")
+    const isSolarSystemView = currentFocusedBody === 'Solar System'
+        || !(currentFocusedBody && celestialBodies.get(currentFocusedBody) && celestialBodies.get(currentFocusedBody).isDistant);
     
     if (isSolarSystemView && distanceKm < 0.1 * LY) {
         distanceText = formatDistance(distanceKm, true);
@@ -8129,7 +8321,16 @@ function updateHomeIndicator() {
         }
     }
 
-    homeLabel.textContent = `You (${userCity}) - ${distanceText}`;
+    // Name home at the scale you're seeing it: your city near Earth, Earth
+    // from across the Solar System or the stars, the Milky Way once the whole
+    // galaxy is a dot (the same point where it's picked as one object)
+    let homeName = `You (${userCity})`;
+    if (viewMode === 'map') {
+        const earthR = earthMesh.geometry?.parameters?.radius || 1.0;
+        if (milkyWayScreenRadius() <= MILKY_WAY_PICK_MAX_PX) homeName = 'Milky Way';
+        else if (camera.position.distanceTo(homePosition) / earthR > 50) homeName = 'Earth';
+    }
+    homeLabel.textContent = `${homeName} - ${distanceText}`;
 
     // Transform home position to camera space to check if it's in front
     const homeInCameraSpace = homePosition.clone().applyMatrix4(camera.matrixWorldInverse);

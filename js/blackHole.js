@@ -25,12 +25,14 @@ const MISS_RADIUS = 13.0;      // bounding sphere (Rs): rays passing further out
 const vertexShader = /* glsl */`
     #include <common>
     #include <logdepthbuf_pars_vertex>
-    uniform mat4 uWorldToDisk;
+    // Local -> disk space, combined on the CPU in doubles. Going through world
+    // space on the GPU (float32) fell apart far from home: at Gargantua's
+    // 2.9e11 units a float only resolves ~30,000 units, about its own size
+    uniform mat4 uLocalToDisk;
     varying vec3 vDiskPos;
     void main() {
-        vec4 world = modelMatrix * vec4(position, 1.0);
-        vDiskPos = (uWorldToDisk * world).xyz;
-        gl_Position = projectionMatrix * viewMatrix * world;
+        vDiskPos = (uLocalToDisk * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         #include <logdepthbuf_vertex>
     }
 `;
@@ -161,7 +163,7 @@ export function createBlackHoleVisual(radius, diskColor = 0xff7a30, tiltSeed = 0
     group.add(diskFrame);
 
     const uniforms = {
-        uWorldToDisk: { value: new THREE.Matrix4() },
+        uLocalToDisk: { value: new THREE.Matrix4() },
         uCamDisk: { value: new THREE.Vector3() },
         uDiskColor: { value: new THREE.Color(diskColor) },
         uTime: timeUniform
@@ -179,11 +181,13 @@ export function createBlackHoleVisual(radius, diskColor = 0xff7a30, tiltSeed = 0
     billboard.name = 'blackHoleLensing';
     billboard.raycast = () => {};
     const camPos = new THREE.Vector3();
+    const worldToDisk = new THREE.Matrix4();
     billboard.onBeforeRender = (_renderer, _scene, camera) => {
         camera.getWorldPosition(camPos);
         diskFrame.updateMatrixWorld(true);
-        uniforms.uWorldToDisk.value.copy(diskFrame.matrixWorld).invert();
-        uniforms.uCamDisk.value.copy(camPos).applyMatrix4(uniforms.uWorldToDisk.value);
+        worldToDisk.copy(diskFrame.matrixWorld).invert();
+        uniforms.uLocalToDisk.value.multiplyMatrices(worldToDisk, billboard.matrixWorld);
+        uniforms.uCamDisk.value.copy(camPos).applyMatrix4(worldToDisk);
     };
     group.add(billboard);
 

@@ -904,7 +904,7 @@ body.ui-hidden #magnifier { display: none; }
     border-radius: 10px;
     border: 1px solid rgba(74, 158, 255, 0.4);
     padding: 12px 16px;
-    z-index: 100;
+    z-index: 1001; /* over the "You" label and arrow (1000) */
     transition: opacity 0.2s ease;
     max-width: 280px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
@@ -2258,7 +2258,7 @@ body.ui-hidden #magnifier { display: none; }
 
 /* Scale menu */
 .popup-heading-first { margin-top: 0; padding-top: 0; border-top: 0; }
-.scale-panel { min-width: 280px; }
+.scale-panel { min-width: 280px; left: 0; transform: none; } /* leftmost button: open rightward so it isn't cut off */
 #scale-slider { width: 100%; margin: 8px 0 2px; accent-color: #4a9eff; }
 .scale-slider-labels { display: flex; justify-content: space-between; font-size: 0.72rem; color: #88aaff; }
 .scale-presets { display: flex; gap: 6px; margin: 10px 0 6px; }

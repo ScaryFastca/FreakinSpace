@@ -724,7 +724,7 @@ export const nearbyStars = [
         description: "Closest known black hole to Earth, dormant stellar black hole"
     },
     {
-        name: "Gargantua",
+        name: "Gargantua (Interstellar)",
         type: "blackhole",
         subtype: "supermassive",
         distance: 123000000 * LY,
@@ -1396,7 +1396,7 @@ export const sizeComparison = [
         description: "Luminous Blue Variable, one of the most luminous stars known"
     },
     {
-        name: "Gargantua",
+        name: "Gargantua (Interstellar)",
         type: "blackhole",
         radius: 295000000
     },
@@ -1448,7 +1448,7 @@ export const sizeComparison = [
     }
 ];
 
-function raDecToAppFrame(raDeg, decDeg) {
+export function raDecToAppFrame(raDeg, decDeg) {
     const raRad = raDeg * Math.PI / 180;
     const decRad = decDeg * Math.PI / 180;
     
@@ -1509,7 +1509,7 @@ const REAL_STAR_COORDS = {
     "Phoenix A*": { ra: 8.35, dec: -42.4 },
     "J0529-4351": { ra: 82.35, dec: -43.85 },
     "Gaia BH1": { ra: 97.44, dec: -0.01 },
-    "Gargantua": { ra: 266.42, dec: -29.01 },
+    "Gargantua (Interstellar)": { ra: 266.42, dec: -29.01 },
     "Antares": { ra: 247.35, dec: -26.43 },
     "Arcturus": { ra: 213.92, dec: 19.18 },
     "Aldebaran": { ra: 68.98, dec: 16.51 },
