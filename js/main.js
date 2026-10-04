@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=246';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=246';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=247';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=247';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=246';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=246';
-import { initCheeseMoon } from './cheeseMoon.js?v=246';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=246';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=246';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=246';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=246';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=246';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=247';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=247';
+import { initCheeseMoon } from './cheeseMoon.js?v=247';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=247';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=247';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=247';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=247';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=247';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=246';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=246';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=247';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=247';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -5077,9 +5077,10 @@ function onClick(event) {
         focusOnMilkyWay();
         return;
     }
-    if (solarSystemUnderPointer(event.clientX, event.clientY,
-        isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX)) {
-        focusOnBody('Solar System');
+    const ssPick = solarSystemPick(event.clientX, event.clientY,
+        isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX);
+    if (ssPick) {
+        focusOnBody(ssPick);
         return;
     }
 
@@ -5312,8 +5313,10 @@ function showBodyInfo(data) {
         let massStr = typeof data.mass === 'string' ? data.mass : '';
         
         let multiplier = 1;
-        if (massStr.includes('10⁶')) multiplier = 1000000;
-        else if (massStr.includes('10⁹')) multiplier = 1000000000;
+        // "× 10ⁿ Solar masses", any n (the Milky Way's 10¹² read as 1 before)
+        const SUPERSCRIPTS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+        const solarPow = massStr.includes('Solar masses') && massStr.match(/10([⁰¹²³⁴⁵⁶⁷⁸⁹]+)/);
+        if (solarPow) multiplier = Math.pow(10, Number([...solarPow[1]].map(c => SUPERSCRIPTS.indexOf(c)).join('')));
         else if (massStr.includes('10^23')) multiplier = 100000000000000000000000;
         else if (massStr.includes('10^24')) multiplier = 1000000000000000000000000;
         else if (massStr.includes('10^25')) multiplier = 10000000000000000000000000;
@@ -5339,7 +5342,11 @@ function showBodyInfo(data) {
         if (earthMasses && earthMasses > 1.5) {
             hasFacts = true;
             let formattedMass = "";
-            if (earthMasses >= 1000000000) {
+            if (earthMasses >= 1e15) {
+                formattedMass = (earthMasses / 1e15).toLocaleString(undefined, { maximumFractionDigits: 1 }) + " quadrillion";
+            } else if (earthMasses >= 1e12) {
+                formattedMass = (earthMasses / 1e12).toFixed(1) + " trillion";
+            } else if (earthMasses >= 1000000000) {
                 formattedMass = (earthMasses / 1000000000).toFixed(1) + " billion";
             } else if (earthMasses >= 1000000) {
                 formattedMass = (earthMasses / 1000000).toFixed(1) + " million";
@@ -5941,19 +5948,20 @@ function updateHoverState(clientX, clientY) {
         }
         return;
     }
-    if (solarSystemUnderPointer(clientX, clientY, MOUSE_BODY_HIT_RADIUS_PX)) {
-        const ss = celestialBodies.get('Solar System');
-        if (ss && hoveredBody !== ss) {
-            ss.mesh.userData.previewRadius = currentSystemEdge; // magnifier framing
+    const ssPick = solarSystemPick(clientX, clientY, MOUSE_BODY_HIT_RADIUS_PX);
+    const ss = ssPick && celestialBodies.get(ssPick);
+    if (ss) {
+        if (hoveredBody !== ss) {
+            if (ssPick === 'Solar System') ss.mesh.userData.previewRadius = currentSystemEdge; // magnifier framing
             hoveredBody = ss;
             hoveredOrbit = null;
             hoveredConstellation = null;
             orbitLines.forEach(obj => { obj.visible.material.opacity = 0.2; });
             showTooltip(ss.data, clientX, clientY);
-        } else if (ss) {
+        } else {
             updateTooltipPosition(clientX, clientY);
         }
-        if (ss) return;
+        return;
     }
 
     // Update mouse coordinates
@@ -7247,7 +7255,7 @@ function setupCustomOrbitDrag(canvas) {
         const hits = ray.intersectObjects(meshes, true);
         const radius = isCoarsePointerEvent(event) ? TOUCH_BODY_HIT_RADIUS_PX : MOUSE_BODY_HIT_RADIUS_PX;
         if (milkyWayUnderPointer(event.clientX, event.clientY, radius)
-            || solarSystemUnderPointer(event.clientX, event.clientY, radius)) return;
+            || solarSystemPick(event.clientX, event.clientY, radius)) return;
         const name = findTinyBodyInFront(event.clientX, event.clientY, radius, hits)
             || (hits.length ? getBodyNameFromIntersection(hits[0]) : null)
             || findNearestBodyOnScreen(event.clientX, event.clientY, celestialBodies, radius);
@@ -7536,20 +7544,32 @@ function milkyWayUnderPointer(clientX, clientY, radiusPx) {
 
 // Same idea one level down: once the whole Solar System (out to the last
 // planet's system) is a dot, pointing at it means the Solar System, not
-// whichever spacecraft or comet happens to project nearest the cursor
+// whichever spacecraft or comet happens to project nearest the cursor.
+// Returns the name to pick, or null to fall through to normal picking. Stars
+// and other distant objects aren't part of the Solar System: from far away
+// (Betelgeuse) Alpha Centauri and Sirius project a few px from the Sun, so
+// whichever of them is nearer the cursor than the Sun's spot wins.
 const SOLAR_SYSTEM_PICK_MAX_PX = 40;
 const _ssScreen = new THREE.Vector3();
-function solarSystemUnderPointer(clientX, clientY, radiusPx) {
-    if (viewMode !== 'map' || !(currentSystemEdge > 0)) return false;
+let _distantBodies = null;
+function solarSystemPick(clientX, clientY, radiusPx) {
+    if (viewMode !== 'map' || !(currentSystemEdge > 0)) return null;
     const dist = camera.position.length(); // the Sun is at the origin
     const screenR = currentSystemEdge * (window.innerHeight / 2)
         / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
-    if (screenR > SOLAR_SYSTEM_PICK_MAX_PX) return false;
+    if (screenR > SOLAR_SYSTEM_PICK_MAX_PX) return null;
     _ssScreen.set(0, 0, 0).project(camera);
-    if (_ssScreen.z < -1 || _ssScreen.z > 1) return false;
+    if (_ssScreen.z < -1 || _ssScreen.z > 1) return null;
     const x = (_ssScreen.x * 0.5 + 0.5) * window.innerWidth;
     const y = (-_ssScreen.y * 0.5 + 0.5) * window.innerHeight;
-    return Math.hypot(clientX - x, clientY - y) <= Math.max(screenR, radiusPx);
+    const toSun = Math.hypot(clientX - x, clientY - y);
+    if (toSun > Math.max(screenR, radiusPx)) return null;
+    if (!_distantBodies) {
+        _distantBodies = new Map();
+        celestialBodies.forEach((b, name) => { if (b.isDistant && name !== 'Solar System') _distantBodies.set(name, b); });
+    }
+    const star = findNearestBodyOnScreen(clientX, clientY, _distantBodies, toSun);
+    return star || 'Solar System';
 }
 
 // Fly out to a three-quarter view of the whole disk, from the side you're on
