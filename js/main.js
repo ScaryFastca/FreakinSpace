@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=247';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=247';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=248';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=248';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=247';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=247';
-import { initCheeseMoon } from './cheeseMoon.js?v=247';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=247';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=247';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=247';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=247';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady } from './satellites.js?v=247';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=248';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=248';
+import { initCheeseMoon } from './cheeseMoon.js?v=248';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=248';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=248';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=248';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=248';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=248';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=247';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=247';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=248';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=248';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -4150,14 +4150,28 @@ function animate() {
 // again, so you know they're there without having to turn them off. Data is
 // fetched first, then the fade plays. Once per visit; touching the Satellites
 // button cancels it
-const SAT_INTRO = { nearRadii: 20, fadeIn: 2500, hold: 2500, fadeOut: 3000, prepTimeout: 9000 };
+// (prepTimeout: CelesTrak can take a minute; waiting only 9 s played the
+// intro before anything had arrived, so it never showed)
+const SAT_INTRO = { nearRadii: 20, fadeIn: 2500, hold: 2500, fadeOut: 3000, prepTimeout: 60000 };
 const satIntro = { state: 'waiting', t0: 0 };
 function endSatelliteIntro() {
     if (satIntro.state === 'done') return;
     satIntro.state = 'done';
     setSatellitePreview(0);
 }
+// "loading…" beside the Satellites button while groups the mode wants are
+// still downloading (the label itself holds the mode)
+let satLoadingShown = false;
+function updateSatelliteLoadingTag() {
+    const loading = satellitesLoading();
+    if (loading === satLoadingShown) return;
+    satLoadingShown = loading;
+    const tag = document.getElementById('satellites-loading');
+    if (tag) tag.hidden = !loading;
+}
+
 function updateSatelliteIntro() {
+    updateSatelliteLoadingTag();
     if (satIntro.state === 'done' || viewMode !== 'map') return;
     const earth = celestialBodies.get('Earth');
     if (!earth) return;

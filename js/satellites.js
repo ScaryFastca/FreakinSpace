@@ -7,6 +7,13 @@ const SATELLITE_JS_URL = 'https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/+esm';
 const CELESTRAK = 'https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&GROUP=';
 // CelesTrak updates every ~2 h and asks clients not to re-download more often
 const CACHE_TTL_MS = 2 * 3600 * 1000;
+// A saved copy younger than this is used straight away (refreshed in the
+// background once past CACHE_TTL_MS): TLEs stay good for days, and CelesTrak
+// can take a minute or more to answer, which left groups (the geostationary
+// ring) missing long after the others appeared
+const CACHE_USE_MS = 7 * 24 * 3600 * 1000;
+// Give up on a download that hangs rather than wait for the browser's timeout
+const FETCH_TIMEOUT_MS = 30000;
 const EARTH_RADIUS_KM = 6371;
 // SGP4 budget per frame; big groups (Starlink ~10k) refresh over several frames
 const PROPAGATIONS_PER_FRAME = 1500; // ~6 ms
@@ -48,21 +55,40 @@ function reportProblem(label, message) {
     statusListener?.([...problems.values()]);
 }
 
-async function fetchTle(key) {
-    const cacheKey = 'tle:' + key;
-    let cached = null;
+async function downloadTle(key, cacheKey) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
-        cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
-        if (cached && Date.now() - cached.t < CACHE_TTL_MS) return cached.text;
-    } catch { /* corrupt cache: refetch */ }
-    try {
-        const res = await fetch(CELESTRAK + key);
+        const res = await fetch(CELESTRAK + key, { signal: ctrl.signal });
         // 403 = CelesTrak's limit: same group fetched <2 h ago from this IP
         // (e.g. a second browser on the same network)
         if (!res.ok) throw new Error('HTTP ' + res.status);
         const text = await res.text();
         try { localStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), text })); } catch { /* quota */ }
         return text;
+    } catch (err) {
+        throw err.name === 'AbortError' ? new Error(`no answer after ${FETCH_TIMEOUT_MS / 1000} s`) : err;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+async function fetchTle(key) {
+    const cacheKey = 'tle:' + key;
+    let cached = null;
+    try {
+        cached = JSON.parse(localStorage.getItem(cacheKey) || 'null');
+    } catch { /* corrupt cache: refetch */ }
+    const age = cached?.text ? Date.now() - cached.t : Infinity;
+    if (age < CACHE_USE_MS) {
+        // Saved copy now; past CelesTrak's 2 h refresh, fetch a new one for next time
+        if (age >= CACHE_TTL_MS) {
+            downloadTle(key, cacheKey).catch(err => console.warn(`Background refresh of ${key} failed (${err.message}); keeping the saved copy`));
+        }
+        return cached.text;
+    }
+    try {
+        return await downloadTle(key, cacheKey);
     } catch (err) {
         // A stale copy (positions drift slowly; TLEs stay usable for days) beats nothing
         if (cached?.text) {
@@ -137,6 +163,15 @@ export function setSatellitePreview(alpha) {
         }
     }
 }
+// Groups the current mode wants that are still downloading or being placed
+export function satellitesLoading() {
+    return GROUPS.some(cfg => {
+        const g = groups.get(cfg.key);
+        const byMode = mode !== 'Off' && (!cfg.optional || mode === 'On + Starlink');
+        return byMode && g && (g.loading || (g.points && !g.fullPass));
+    });
+}
+
 // The standard groups downloaded and positioned once (failed ones don't count)
 export function satellitesReady() {
     return GROUPS.filter(cfg => !cfg.optional).every(cfg => {
