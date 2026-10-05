@@ -1,19 +1,20 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=264';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=264';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=272';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=272';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=264';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=264';
-import { initCheeseMoon } from './cheeseMoon.js?v=264';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=264';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=264';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=264';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=264';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=264';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=272';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=272';
+import { initCheeseMoon } from './cheeseMoon.js?v=272';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=272';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=272';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=272';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=272';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=272';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=272';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=264';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=264';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=272';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=272';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1516,7 +1517,7 @@ function init() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     setupTravelStreaks();
     setupStellarComparison();
-    setupKonamiCode();
+    // setupKonamiCode(); // Konami easter egg parked until there's a better idea for it
 
     // Controls
     controls = new OrbitControls(camera, renderer.domElement);
@@ -1651,7 +1652,12 @@ function init() {
         const label = document.getElementById('night-view-mode');
         if (label) label.textContent = style === 'map' ? 'Street map' : 'City lights';
     };
-    applyNightView(localStorage.getItem(NIGHT_VIEW_KEY) === 'lights' ? 'lights' : 'map');
+    // Street-map night style parked for now: always city lights, button hidden.
+    // To bring it back: restore this line and the button (#night-view-toggle).
+    // applyNightView(localStorage.getItem(NIGHT_VIEW_KEY) === 'lights' ? 'lights' : 'map');
+    applyNightView('lights');
+    const nightViewBtn = document.getElementById('night-view-toggle');
+    if (nightViewBtn) nightViewBtn.style.display = 'none';
     // Globe mode: Earth as a desktop globe (grid, glowing equator, tilted stand)
     const applyGlobeMode = on => {
         setGlobeMode(on, celestialBodies.get('Earth')?.mesh, scene);
@@ -4162,6 +4168,8 @@ function animate() {
     // Magnifier first: the main render then clears the whole canvas, so the
     // close-up doesn't linger in the canvas behind the scope's round frame
     updateCursorSun();
+    updateUfos();
+    document.getElementById('home-indicator')?.classList.toggle('under-attack', ufoAttackActive());
     updateHomeTrip();
     renderMagnifier();
     renderer.render(scene, camera);
@@ -4301,6 +4309,37 @@ function updateHomeTrip() {
     flyToEarthSpot(homeCityDirLocal(), HOME_TRIP.diveMs, HOME_TRIP.cityAltKm);
 }
 
+// ── Mars easter egg ──────────────────────────────────────────────────────
+// Lighting Mars's night side with the cursor sun startles a hidden fleet of
+// UFOs (ufos.js). The point under the cursor must face away from the Sun.
+const _ufoSphere = new THREE.Sphere(), _ufoHit = new THREE.Vector3();
+function checkMarsUfos(R) {
+    _ufoSphere.set(_csPos, R);
+    if (!_csRay.ray.intersectSphere(_ufoSphere, _ufoHit)) return;
+    const normal = _csHit.copy(_ufoHit).sub(_csPos).normalize();
+    const toSun = _csCam.copy(_csPos).negate().normalize(); // the Sun is at the origin
+    if (normal.dot(toSun) < -0.15) {
+        // ...then they go for the visitor's city, and the camera follows them home
+        launchUfos(scene, _ufoHit.clone(), _csPos.clone(), R, {
+            earthMesh: celestialBodies.get('Earth')?.mesh,
+            cityDirLocal: homeCityDirLocal(),
+            camera, controls,
+            // Chase camera: nothing else may steer the view meanwhile
+            takeCamera: () => {
+                flyToAnimation = null; focusRetarget = null; earthSpotFlight = null; homeTrip = null;
+                currentFocusedBody = null;
+                cameraOffsetFromTarget = null;
+                // Mars's zoom limit (1.4 Mars radii) would otherwise hold the
+                // camera ~620 km up when the chase hands over at the city
+                controls.minDistance = 1e-6;
+            },
+            userBusy: () => mouseButtonsHeld !== 0,
+            // Arrived over the city: settle in with the Earth close-up camera
+            onArrive: () => flyToEarthSpot(homeCityDirLocal(), 500, HOME_TRIP.cityAltKm)
+        });
+    }
+}
+
 // ── Cursor sun ───────────────────────────────────────────────────────────
 // Hovering a planet, moon or other unlit body that's big enough on screen to
 // show its shape turns the cursor into a little sun and lights the body from
@@ -4335,6 +4374,7 @@ function updateCursorSun() {
                 cursorSun.position.copy(_csPos).add(_csHit).addScaledVector(_csCam, R * 2.5);
                 cursorSun.distance = R * 8; // range: the hovered body and its close neighbourhood
                 target = 1;
+                if (body.data?.name === 'Mars' && cursorSunLevel > 0.6) checkMarsUfos(R);
             }
         }
     }
@@ -4347,6 +4387,9 @@ function updateCursorSun() {
     tileLighting.uTorchIntensity.value = cursorSun.intensity;
     tileLighting.uTorchRange.value = cursorSun.distance;
     renderer.domElement.classList.toggle('cursor-sun', target === 1);
+    // (and let the pointer pass through the "You" label while lighting, so
+    // sliding over it doesn't switch the sun off)
+    document.body.classList.toggle('sun-lighting', target === 1);
 }
 
 // ── Hover magnifier ──────────────────────────────────────────────────────

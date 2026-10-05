@@ -2361,3 +2361,18 @@ body.ui-hidden #ui-container * {
 #space-canvas.cursor-sun { cursor: var(--sun-cursor); }
 body.ui-hidden #space-canvas.cursor-sun { cursor: none; }
 body.ui-hidden #hover-tooltip { display: none; }
+/* While the cursor sun is lighting something, the "You" label is see-through
+   to the pointer, so sliding over it keeps the light on */
+body.sun-lighting #home-label { pointer-events: none; }
+
+/* Easter egg: the "You" label shakes while the UFOs attack */
+@keyframes youUnderAttack {
+    0%, 100% { transform: translate(0, 0); }
+    20% { transform: translate(-3px, 1px); }
+    40% { transform: translate(3px, -2px); }
+    60% { transform: translate(-2px, 2px); }
+    80% { transform: translate(2px, -1px); }
+}
+#home-indicator.under-attack #home-label,
+#home-indicator.under-attack #home-arrow { animation: youUnderAttack 0.18s linear infinite; }
+#home-indicator.under-attack #home-label { color: #ff6b6b; border-color: rgba(255, 90, 90, 0.8); }
