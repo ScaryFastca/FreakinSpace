@@ -1,20 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=287';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=287';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=307';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=307';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=287';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=287';
-import { initCheeseMoon } from './cheeseMoon.js?v=287';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=287';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=287';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=287';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=287';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=287';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=287';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=307';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=307';
+import { initCheeseMoon } from './cheeseMoon.js?v=307';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=307';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=307';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=307';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=307';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=307';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=307';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=307';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=287';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=287';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=307';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=307';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -657,11 +658,13 @@ let milkyWayGlowLevel = (() => {
     const v = parseFloat(localStorage.getItem(MW_GLOW_KEY));
     return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 1) : 0.6;
 })();
+let galaxies = null; // other galaxies (galaxies.js)
 let milkyWayBody = null; // hover/click stand-in when the whole galaxy is a dot on screen
 const MILKY_WAY_DATA = {
     name: 'Milky Way',
     type: 'galaxy',
     subtype: 'Barred spiral',
+    radius: 52850 * LY, // (list size and sorting; ~105,700 ly across)
     mass: '1.5 × 10¹² Solar masses',
     temperature: '100–400 billion stars',
     description: 'Our home galaxy, about 100,000 light-years across. The Sun sits in the Orion Spur, 26,700 light-years from the central black hole Sagittarius A*.'
@@ -1356,6 +1359,7 @@ let categorySortModes = {
     'Stars': 'size',              // Default: biggest first
     'Exoplanets': 'name',         // Default: alphabetical
     'Black Holes': 'name',        // Default: alphabetical
+    'Galaxies': 'distance',       // Default: ours first, then nearest
     'Small Bodies': 'distance'    // Default: nearest to Earth first
 }; // Each category has its own sort mode: 'name', 'size', or 'distance'
 
@@ -1531,7 +1535,7 @@ function init() {
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controls.minDistance = 1; // Allow getting very close in comparison view
-    controls.maxDistance = 2000000000; // Increased to 2B to handle distance stars in realistic scale
+    controls.maxDistance = CAMERA_BASE_MAX_DIST; // (raised far out: updateNearPlaneForFocus)
     controls.rotateSpeed = 0.5; // Default rotation speed
     controls.zoomSpeed = 1.0; // Default zoom speed
     controls.panSpeed = 0.5; // Default pan speed
@@ -1579,6 +1583,7 @@ function init() {
     detectUserLocation();
     initMoonShadows();
     initISS();
+    setTimeout(() => prepareISS(renderer), 3000); // (after the first frames)
     setSatelliteMode('Off');   // shown briefly the first time you come near Earth (updateSatelliteIntro)
     createNearbyStars();
     setScaleValue(scaleValue, false); // lay out planets, moons and stars for the starting scale
@@ -1601,9 +1606,10 @@ function init() {
     milkyWay = createMilkyWay();
     scene.add(milkyWay);
     milkyWayBody = { mesh: milkyWay, data: MILKY_WAY_DATA, type: 'galaxy', isDistant: true };
+    galaxies = createGalaxies(scene);
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, focusOnBody, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, focusOnBody, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get focused() { return currentFocusedBody; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
 
     // Spacetime grid removed
 
@@ -1614,6 +1620,8 @@ function init() {
     window.addEventListener('resize', onWindowResize);
     window.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('pointerdown', onMouseDown);
+    setupTwoFingerPan(renderer.domElement);
+    setupTouchSun(renderer.domElement);
     window.addEventListener('pointerup', onMouseUp);
     window.addEventListener('pointercancel', onPointerCancel);
     window.addEventListener('mousemove', onMouseMove);
@@ -1758,16 +1766,28 @@ function init() {
         if (e.code === 'Space' && !isTextEntry(e.target)) e.preventDefault();
     });
 
-    // A / D step the speed ladder down / up, same as the − / + buttons
-    // (below the slowest forward rung, A continues into reverse)
+    // Arrow keys belong to a focused slider or list; elsewhere they drive the
+    // time and scale keys below (and mustn't scroll a panel)
+    const arrowsTaken = el => isTextEntry(el) || (el instanceof HTMLInputElement && el.type === 'range');
+
+    // ← / → step the speed ladder down / up, same as the − / + buttons
+    // (below the slowest forward rung, ← continues into reverse)
     window.addEventListener('keydown', (e) => {
-        if (e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
-        if (e.code === 'KeyD') stepSimSpeed(1);
-        else if (e.code === 'KeyA') stepSimSpeed(-1);
+        if ((e.code !== 'ArrowLeft' && e.code !== 'ArrowRight') || arrowsTaken(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        if (e.repeat) return;
+        stepSimSpeed(e.code === 'ArrowRight' ? 1 : -1);
     });
 
     // Q hides every orbit line and trail (pair with H for a bare view);
-    // E flies to Earth, I to the ISS (same as clicking them)
+    // letters fly to the Sun, planets, Moon, Pluto and ISS (same as clicking
+    // them). Keys shared by several press again for the next one: S Sun →
+    // Saturn, M Moon → Mars → Mercury
+    const FLY_KEYS = {
+        KeyS: ['Sun', 'Saturn'], KeyM: ['Moon', 'Mars', 'Mercury'],
+        KeyE: ['Earth'], KeyV: ['Venus'], KeyJ: ['Jupiter'], KeyU: ['Uranus'],
+        KeyN: ['Neptune'], KeyP: ['Pluto'], KeyI: ['ISS']
+    };
     window.addEventListener('keydown', (e) => {
         if (e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
         if (e.code === 'KeyQ') {
@@ -1775,12 +1795,17 @@ function init() {
             camera.layers.toggle(ORBIT_LAYER);
         } else if (e.code === 'KeyR') {
             endCheeseMoon(false);                 // back to the present (and the plain Moon)
-        } else if ((e.code === 'KeyE' || e.code === 'KeyI' || e.code === 'KeyM') && viewMode === 'map') {
-            const name = { KeyE: 'Earth', KeyI: 'ISS', KeyM: 'Moon' }[e.code];
+        } else if (FLY_KEYS[e.code] && viewMode === 'map') {
+            // Next in the list after the one we're at (first if none). Hidden
+            // ones are skipped: the ISS until its orbit loads, Pluto with the
+            // small bodies turned off
+            const list = FLY_KEYS[e.code].filter(n => celestialBodies.get(n)?.mesh.visible);
+            if (!list.length) return;
+            const at = list.indexOf(currentFocusedBody);
+            const name = list[(at + 1) % list.length];
             cheeseTour.camera = false;
             tourGlide = null;
-            // The ISS has no position until its TLE loads
-            if (name !== 'ISS' || celestialBodies.get(name)?.mesh.visible) focusOnBody(name);
+            focusOnBody(name);
         }
     });
     // Dragging or zooming during the cheese Moon tour hands the camera back
@@ -1788,14 +1813,16 @@ function init() {
     renderer.domElement.addEventListener('pointerdown', takeCamera);
     renderer.domElement.addEventListener('wheel', takeCamera, { passive: true });
 
-    // W / S spread out / compress the distance scale while held; the motion
+    // ↑ / ↓ spread out / compress the distance scale while held; the motion
     // eases in and out (updateScaleKeys), ignoring the OS key auto-repeat
     window.addEventListener('keydown', (e) => {
-        if ((e.code !== 'KeyW' && e.code !== 'KeyS') || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        if ((e.code !== 'ArrowUp' && e.code !== 'ArrowDown') || arrowsTaken(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        e.preventDefault();
+        if (e.shiftKey) return;                   // (Shift + ↑↑↓↓: the hologram secret)
         scaleKeys[e.code] = true;
     });
     window.addEventListener('keyup', (e) => { if (e.code in scaleKeys) scaleKeys[e.code] = false; });
-    window.addEventListener('blur', () => { scaleKeys.KeyW = scaleKeys.KeyS = false; });
+    window.addEventListener('blur', () => { scaleKeys.ArrowUp = scaleKeys.ArrowDown = false; });
 
     // H hides every panel and button for clean screenshots and recordings
     let uiHintTimer = null;
@@ -2289,36 +2316,15 @@ function createDistantObjectMesh(data) {
         group.add(beam2);
         
     } else if (data.type === 'galaxy') {
-        // Galaxy - spiral representation
-        const geometry = new THREE.SphereGeometry(visualRadius, 32, 32);
-        const material = new THREE.MeshBasicMaterial({ 
-            color: data.color || 0xDDDDBB,
-            transparent: true,
-            opacity: 0.6
-        });
-        const galaxy = new THREE.Mesh(geometry, material);
-        galaxy.userData.name = data.name;
-        group.add(galaxy);
-        
-        // Spiral arms (simplified as rings)
-        for (let i = 0; i < 3; i++) {
-            const armGeo = new THREE.RingGeometry(
-                visualRadius * (0.3 + i * 0.3), 
-                visualRadius * (0.4 + i * 0.3), 
-                32
-            );
-            const armMat = new THREE.MeshBasicMaterial({
-                color: data.emissive || 0xCCCCAA,
-                transparent: true,
-                opacity: 0.3 - i * 0.05,
-                side: THREE.DoubleSide
-            });
-            const arm = new THREE.Mesh(armGeo, armMat);
-            arm.rotation.x = Math.PI / 2;
-            arm.rotation.z = i * Math.PI / 3;
-            group.add(arm);
-        }
-        
+        // Drawn as a particle cloud by galaxies.js; this invisible sphere is
+        // the click target, sized there each frame (the whole galaxy while
+        // it's small on screen, its core once it's big)
+        const pick = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12),
+            new THREE.MeshBasicMaterial({ visible: false }));
+        pick.name = 'galaxyPick';
+        pick.userData.name = data.name;
+        group.add(pick);
+
     } else if (data.type === 'nebula') {
         // Nebula - diffuse cloud
         const geometry = new THREE.SphereGeometry(visualRadius, 32, 32);
@@ -3552,8 +3558,51 @@ const MOON_TIDAL_OFFSET = {
     Moon: 0 // tune if the Moon's near side ends up pointing the wrong way
 };
 
+// ── ?perf: slow-frame log ────────────────────────────────────────────────
+// Add ?perf to the address to log every frame slower than 50 ms to the
+// browser console (F12), with where the time went and what was new that
+// frame (shaders compiled, textures/geometries uploaded). For catching
+// freezes that only happen on some machines or connections
+const PERF_LOG = new URLSearchParams(location.search).has('perf');
+const perfLog = { frameStart: 0, lastEnd: 0, marks: [], prev: null };
+function perfMark(name) {
+    if (PERF_LOG) perfLog.marks.push([name, performance.now()]);
+}
+function perfFrameEnd() {
+    if (!PERF_LOG) return;
+    const end = performance.now();
+    const info = renderer.info;
+    const cur = { programs: info.programs?.length || 0, textures: info.memory.textures, geometries: info.memory.geometries };
+    const prev = perfLog.prev || cur;
+    perfLog.prev = cur;
+    const frame = end - (perfLog.lastEnd || end);
+    const outside = perfLog.frameStart - (perfLog.lastEnd || perfLog.frameStart);
+    perfLog.lastEnd = end;
+    if (frame > 50) {
+        const parts = [];
+        let t = perfLog.frameStart;
+        for (const [name, at] of perfLog.marks) { parts.push(`${name} ${(at - t).toFixed(1)}`); t = at; }
+        parts.push(`render ${(end - t).toFixed(1)}`);
+        const earth = celestialBodies.get('Earth')?.mesh;
+        const altKm = earth ? (camera.position.distanceTo(earth.getWorldPosition(_magPos)) / (earth.userData.visualRadius || 1) - 1) * 6371 : NaN;
+        console.warn(`[perf] ${frame.toFixed(0)} ms frame | outside our code ${outside.toFixed(1)} ms | ${parts.join(', ')} ms`
+            + ` | new: ${cur.programs - prev.programs} shaders, ${cur.textures - prev.textures} textures, ${cur.geometries - prev.geometries} geometries`
+            + ` | Earth alt ${altKm.toFixed(0)} km, focus ${currentFocusedBody}, UFOs ${ufoAttackActive() ? 'attacking' : '-'}`);
+    }
+    perfLog.marks.length = 0;
+}
+if (PERF_LOG && typeof PerformanceObserver !== 'undefined') {
+    try {
+        // Long tasks outside the frame loop (downloads parsed, images decoded…)
+        new PerformanceObserver(list => list.getEntries().forEach(e =>
+            console.warn(`[perf] long task ${e.duration.toFixed(0)} ms (${e.attribution?.[0]?.containerSrc || e.name})`)
+        )).observe({ type: 'longtask' });
+    } catch { /* not supported */ }
+}
+
 function animate() {
     animationId = requestAnimationFrame(animate);
+    if (PERF_LOG) perfLog.frameStart = performance.now();
 
     stellarTime.value = performance.now() / 1000;
     const nowMs = Date.now();
@@ -4163,16 +4212,21 @@ function animate() {
     // Draw the animated guide only while one is active.
     if (hoveredObjectName) drawGuideLine();
     
+    perfMark('scene updates');
     updateEarthNightUniforms();
     updateEarthTiles(celestialBodies.get('Earth')?.mesh, camera, renderer, viewMode === 'map');
+    perfMark('map tiles');
     // Magnifier first: the main render then clears the whole canvas, so the
     // close-up doesn't linger in the canvas behind the scope's round frame
     updateCursorSun();
     updateUfos();
     document.getElementById('home-indicator')?.classList.toggle('under-attack', ufoAttackActive());
     updateHomeTrip();
+    perfMark('UFOs, light, trip');
     renderMagnifier();
+    perfMark('magnifier');
     renderer.render(scene, camera);
+    perfFrameEnd();
 }
 
 // ── Satellites intro ─────────────────────────────────────────────────────
@@ -4259,6 +4313,7 @@ function homeCityDirLocal() {
 function startHomeTrip() {
     const earth = celestialBodies.get('Earth');
     if (!earth) return;
+    trackEvent('trip-home');
     if (viewMode !== 'map') {
         // Size Comparison: back to the map first (its own flight home), then descend
         homeTrip = { t0: performance.now() };
@@ -4313,6 +4368,16 @@ function updateHomeTrip() {
 // Lighting Mars's night side with the cursor sun startles a hidden fleet of
 // UFOs (ufos.js). The point under the cursor must face away from the Sun.
 const _ufoSphere = new THREE.Sphere(), _ufoHit = new THREE.Vector3();
+// Site statistics (GoatCounter, no cookies): page views come from the script
+// tag in index.html; these count a few things people do inside the app.
+// GoatCounter ignores localhost, so testing doesn't count
+let lastTracked = null;
+function trackEvent(name) {
+    if (name === lastTracked) return; // (e.g. clicking the same planet again)
+    lastTracked = name;
+    try { window.goatcounter?.count?.({ path: name, title: name, event: true }); } catch { /* blocked */ }
+}
+
 function checkMarsUfos(R) {
     _ufoSphere.set(_csPos, R);
     if (!_csRay.ray.intersectSphere(_ufoSphere, _ufoHit)) return;
@@ -4320,7 +4385,7 @@ function checkMarsUfos(R) {
     const toSun = _csCam.copy(_csPos).negate().normalize(); // the Sun is at the origin
     if (normal.dot(toSun) < -0.15) {
         // ...then they go for the visitor's city, and the camera follows them home
-        launchUfos(scene, _ufoHit.clone(), _csPos.clone(), R, {
+        const launched = launchUfos(scene, _ufoHit.clone(), _csPos.clone(), R, {
             earthMesh: celestialBodies.get('Earth')?.mesh,
             cityDirLocal: homeCityDirLocal(),
             camera, controls,
@@ -4337,6 +4402,7 @@ function checkMarsUfos(R) {
             // Arrived over the city: settle in with the Earth close-up camera
             onArrive: () => flyToEarthSpot(homeCityDirLocal(), 1500, HOME_TRIP.cityAltKm)
         });
+        if (launched) trackEvent('egg/ufos');
     }
 }
 
@@ -4353,9 +4419,14 @@ const _csPos = new THREE.Vector3(), _csCam = new THREE.Vector3(), _csHit = new T
 let cursorSunLevel = 0;
 function updateCursorSun() {
     if (!cursorSun) return;
-    const body = hoveredBody;
+    // (on phones a held finger plays the cursor: see the touch sun below)
+    const touch = touchSun.active ? touchSun : null;
+    const body = touch ? touch.body : hoveredBody;
+    const px = touch ? touch.x : lastMouseX, py = touch ? touch.y : lastMouseY;
     let target = 0, R = 0;
-    if (body?.mesh?.visible && lastMouseX >= 0 && !isMouseOverUI && !HOVER_NONE_MQ.matches && !mouseButtonsHeld
+    // (map view only: Size Comparison lights everything from the viewer's side)
+    if (body?.mesh?.visible && viewMode === 'map'
+        && (touch ||(lastMouseX >= 0 && !isMouseOverUI && !HOVER_NONE_MQ.matches && !mouseButtonsHeld))
         && body.type !== 'star' && !SELF_LIT_TYPES.has(body.data?.type) && body !== milkyWayBody) {
         body.mesh.getWorldPosition(_csPos);
         R = magnifierRadius(body.mesh);
@@ -4363,7 +4434,7 @@ function updateCursorSun() {
         const radiusPx = R * (window.innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
         if (R > 0 && radiusPx >= CURSOR_SUN.minRadiusPx && dist > R * 1.05) {
             // Where the cursor ray crosses the plane through the body facing us
-            _csNdc.set(lastMouseX / window.innerWidth * 2 - 1, 1 - lastMouseY / window.innerHeight * 2);
+            _csNdc.set(px / window.innerWidth * 2 - 1, 1 - py / window.innerHeight * 2);
             _csRay.setFromCamera(_csNdc, camera);
             _csCam.copy(camera.position).sub(_csPos).normalize();
             _csPlane.setFromNormalAndCoplanarPoint(_csCam, _csPos);
@@ -4372,7 +4443,11 @@ function updateCursorSun() {
                 // lit from the side), then forward toward the camera
                 _csHit.sub(_csPos).multiplyScalar(2).clampLength(0, R * 4);
                 cursorSun.position.copy(_csPos).add(_csHit).addScaledVector(_csCam, R * 2.5);
-                cursorSun.distance = R * 8; // range: the hovered body and its close neighbourhood
+                // Reach: the light sits 2.5 R in front of the body, so 3.6 R
+                // covers the face toward you (edges fading) but nothing behind
+                // the body, which is ≥ 3.5 R away. There are no shadows, so a
+                // longer reach lit moons on the far side straight through it
+                cursorSun.distance = R * 3.6;
                 target = 1;
                 if (body.data?.name === 'Mars' && cursorSunLevel > 0.6) checkMarsUfos(R);
             }
@@ -4390,6 +4465,88 @@ function updateCursorSun() {
     // (and let the pointer pass through the "You" label while lighting, so
     // sliding over it doesn't switch the sun off)
     document.body.classList.toggle('sun-lighting', target === 1);
+}
+
+// ── Touch sun ────────────────────────────────────────────────────────────
+// Phones have no cursor to hover with: touch and hold a planet or moon (finger
+// still for a moment) and the finger becomes the little sun until it lifts;
+// slide it to move the light. The view holds still meanwhile, and lifting
+// isn't a tap
+const TOUCH_SUN_HOLD_MS = 400;
+const touchSun = { active: false, body: null, x: 0, y: 0, id: null, startX: 0, startY: 0,
+    timer: null, controlsWere: true, justEnded: false };
+const _tsPos = new THREE.Vector3();
+
+// Nearest litable body whose disc is under (x, y)
+function bodyDiscAt(x, y) {
+    if (viewMode !== 'map') return null;
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    let best = null, bestDist = Infinity;
+    celestialBodies.forEach(body => {
+        if (!body.mesh?.visible || body.type === 'star' || SELF_LIT_TYPES.has(body.data?.type)) return;
+        body.mesh.getWorldPosition(_tsPos);
+        const dist = camera.position.distanceTo(_tsPos);
+        const R = magnifierRadius(body.mesh);
+        if (!(R > 0) || dist <= R * 1.05 || dist >= bestDist) return;
+        const rPx = R * (window.innerHeight / 2) / tanHalf / dist;
+        if (rPx < CURSOR_SUN.minRadiusPx) return;
+        _tsPos.project(camera);
+        if (_tsPos.z > 1) return; // behind the camera
+        const sx = (_tsPos.x * 0.5 + 0.5) * window.innerWidth, sy = (-_tsPos.y * 0.5 + 0.5) * window.innerHeight;
+        if (Math.hypot(x - sx, y - sy) > rPx) return;
+        best = body; bestDist = dist;
+    });
+    return best;
+}
+
+function endTouchSun() {
+    clearTimeout(touchSun.timer);
+    touchSun.timer = null;
+    touchSun.id = null;
+    if (!touchSun.active) return;
+    touchSun.active = false;
+    touchSun.body = null;
+    touchSun.justEnded = true; // (onMouseUp: not a tap)
+    controls.enabled = touchSun.controlsWere;
+}
+
+function setupTouchSun(canvas) {
+    canvas.addEventListener('pointerdown', e => {
+        touchSun.justEnded = false;
+        if (e.pointerType !== 'touch') return;
+        if (!e.isPrimary) { endTouchSun(); return; } // second finger: pinch/pan instead
+        touchSun.id = e.pointerId;
+        touchSun.startX = touchSun.x = e.clientX;
+        touchSun.startY = touchSun.y = e.clientY;
+        clearTimeout(touchSun.timer);
+        touchSun.timer = setTimeout(() => {
+            touchSun.timer = null;
+            if (touchSun.id === null) return;
+            const body = bodyDiscAt(touchSun.x, touchSun.y);
+            if (!body) return;
+            touchSun.active = true;
+            touchSun.body = body;
+            touchSun.controlsWere = controls.enabled;
+            controls.enabled = false; // the finger moves the light now, not the view
+            navigator.vibrate?.(15);
+        }, TOUCH_SUN_HOLD_MS);
+    });
+    canvas.addEventListener('pointermove', e => {
+        if (e.pointerId !== touchSun.id) return;
+        touchSun.x = e.clientX;
+        touchSun.y = e.clientY;
+        // Moved before the hold finished: an ordinary drag
+        if (!touchSun.active && touchSun.timer
+            && Math.hypot(e.clientX - touchSun.startX, e.clientY - touchSun.startY) > TOUCH_TAP_MOVE_TOLERANCE_PX) {
+            clearTimeout(touchSun.timer);
+            touchSun.timer = null;
+        }
+    });
+    const up = e => { if (e.pointerId === touchSun.id) endTouchSun(); };
+    canvas.addEventListener('pointerup', up);
+    canvas.addEventListener('pointercancel', up);
+    // (no long-press menu or text selection)
+    canvas.addEventListener('contextmenu', e => { if (touchSun.active || touchSun.justEnded) e.preventDefault(); });
 }
 
 // ── Hover magnifier ──────────────────────────────────────────────────────
@@ -4545,8 +4702,10 @@ function renderMagnifier() {
     renderer.setScissor(left, y, size, size);
     renderer.setViewport(left, y, size, size);
     if (milkyWay) suspendMilkyWayFan(milkyWay, true); // the fan follows the main view's cursor
+    if (galaxies) suspendGalaxyFans(galaxies, true);
     renderer.render(scene, cam);
     if (milkyWay) suspendMilkyWayFan(milkyWay, false);
+    if (galaxies) suspendGalaxyFans(galaxies, false);
     renderer.setScissorTest(false);
     renderer.setViewport(_magViewport);
     magnifier.spikes.forEach((o, i) => o.scale.setScalar(spikeScales[i]));
@@ -4642,6 +4801,7 @@ function prepareEarthSurfaceCamera() {
 // the Earth close-up camera's altitude remap), so it covers that mode too.
 const _nearBodyPos = new THREE.Vector3();
 const CAMERA_BASE_FAR = 1e10;
+const CAMERA_BASE_MAX_DIST = 2e9;
 function updateNearPlaneForFocus() {
     // Nearest thing that could be clipped: the focus point, or the surface of
     // any Solar System body. Using only the focus distance clipped Earth away
@@ -4661,6 +4821,9 @@ function updateNearPlaneForFocus() {
     // Compressed) a fixed far plane clipped home, the Milky Way and everything
     // near it. Keep three times the camera's distance from the Sun in range.
     const far = Math.max(CAMERA_BASE_FAR, camera.position.length() * 3);
+    // Zoom-out limit: far enough to see home from wherever you are. A fixed
+    // 2·10⁹ stopped you ~1% of the way back from Gargantua or M87*
+    if (viewMode === 'map') controls.maxDistance = Math.max(CAMERA_BASE_MAX_DIST, controls.target.length() * 3);
     if (Math.abs(near - camera.near) > near * 0.05 || Math.abs(far - camera.far) > far * 0.05) {
         camera.near = near;
         camera.far = far;
@@ -4701,8 +4864,11 @@ function finishEarthSurfaceCamera() {
 }
 
 function focusOnBody(name) {
+    // (the side list's Milky Way entry)
+    if (name === 'Milky Way' && viewMode === 'map' && milkyWayBody) { focusOnMilkyWay(); return; }
     const body = celestialBodies.get(name);
     if (!body) return;
+    if (!cheeseTour.active) trackEvent(`focus/${name}`);
     // Picking the ISS slows time so Earth doesn't race by below it (the
     // cheese tour sets its own speeds)
     if (name === 'ISS' && !cheeseTour.active && !simPaused && Math.abs(currentSimSps()) > ISS_VIEW_SPS) {
@@ -4880,6 +5046,8 @@ function focusOnBody(name) {
     distance = Math.max(distance, 6);   // Absolute minimum
     // Spacecraft are a few hundredths of a unit: frame the model up close
     // with Earth filling the background. True-size small bodies likewise.
+    const galaxyRadius = body.data.type === 'galaxy' ? body.mesh.userData.galaxyRadius : 0;
+    if (galaxyRadius) distance = galaxyRadius * 1.8;
     const tinyBody = body.type === 'satellite' || (body.type === 'smallbody' && ownRadius < 0.05);
     if (tinyBody) distance = ownRadius * 10;
     if (body.type === 'exoplanet' && body.orbitRadius) {
@@ -4895,6 +5063,7 @@ function focusOnBody(name) {
     // includes children, so for planets it would swallow their moons' orbits
     // and block zooming (OrbitControls enforces minDistance every frame).
     controls.minDistance = Math.max(ownRadius * 1.4, camera.near * 2.5);
+    if (galaxyRadius) controls.minDistance = Math.max(galaxyRadius * 0.002, camera.near * 2.5); // (fly into it)
     if (tinyBody) controls.minDistance = ownRadius * 1.3; // until it nearly fills the view
     // Spacecraft models: right up to the hardware (pan onto a part, then zoom),
     // a metre or two at the model's scale; the near plane shrinks to match
@@ -5090,7 +5259,7 @@ function stepSizeComparison(direction) {
 
     // If mid-animation, step from the current destination (bodyName), not
     // currentFocusedBody, so the next target is always one step further.
-    const baseName = flyToAnimation ? flyToAnimation.bodyName : currentFocusedBody;
+    const baseName = flyToAnimation ? flyToAnimation.bodyName : (currentFocusedBody || compareLastName);
     let currentIndex = sizeComparisonCatalog.findIndex(item => item.name === baseName);
     if (currentIndex === -1) currentIndex = 0;
 
@@ -5103,7 +5272,7 @@ function stepSizeComparison(direction) {
 }
 
 function onWheel(event) {
-    if (viewMode === 'sizeCompare') {
+    if (viewMode === 'sizeCompare' && !compareFree) {
         event.preventDefault();
         stepSizeComparison(event.deltaY > 0 ? 1 : -1);
     }
@@ -5330,6 +5499,7 @@ function onClick(event) {
     if (intersects[0]?.object.userData.isCheeseWedge && cheeseMoon) {
         cheeseMoon.trigger(simDate);
         startCheeseTour();
+        trackEvent('egg/cheese-moon');
         return;
     }
 
@@ -5452,7 +5622,10 @@ function showBodyInfo(data) {
         html += `<div class="detail-row"><span class="detail-label">Spectral Class:</span><span class="detail-value">${data.spectralClass}</span></div>`;
     }
     if (data.radius) {
-        const radiusText = data.radius > 100000 
+        // (galaxies in light-years: ~16,000 ly, not 2·10¹¹ Solar radii)
+        const radiusText = data.radius > 100 * LY
+            ? `${Math.round(data.radius / LY).toLocaleString()} light-years`
+            : data.radius > 100000
             ? `${(data.radius / 696340).toFixed(2)} Solar radii`
             : `${data.radius.toLocaleString()} km`;
         html += `<div class="detail-row"><span class="detail-label">Radius:</span><span class="detail-value">${radiusText}</span></div>`;
@@ -6096,12 +6269,39 @@ function onMouseDown(event) {
     // We must release the focus to allow panning, otherwise animate() will tick the target back to the body
     const isPanning = event.shiftKey || event.button === 1 || event.button === 2;
 
+    if (isPanning) releaseFocusForPan();
+}
+
+// Panning lets go of the followed object, otherwise animate() ticks the
+// target straight back to it
+// Size Comparison normally holds the view on one object (scroll steps along
+// the lineup). Panning frees the camera: scroll and pinch zoom, orbit all
+// the way round. Picking an object (click, arrows, list) locks on again
+let compareFree = false;
+let compareLastName = null; // (arrows step on from here while free)
+function setCompareFree(on) {
+    if (on === compareFree) return;
+    compareFree = on;
+    if (viewMode !== 'sizeCompare') return;
+    controls.enableZoom = on;
+    controls.minPolarAngle = on ? 0 : Math.PI * 0.25;
+    controls.maxPolarAngle = on ? Math.PI : Math.PI * 0.75;
+    if (on) {
+        compareLastName = flyToAnimation?.bodyName || currentFocusedBody || compareLastName;
+        flyToAnimation = null;
+        currentFocusedBody = null;
+        updateSidebarSelection(null);
+    }
+}
+
+function releaseFocusForPan() {
+    if (viewMode === 'sizeCompare') { setCompareFree(true); return; }
     // Following a satellite (the ISS): a pan just shifts the view and stays
     // locked on (see satPan); unfollowing would leave it behind in a second
     const focused = currentFocusedBody && celestialBodies.get(currentFocusedBody);
-    if (isPanning && viewMode === 'map' && focused?.type === 'satellite') return;
+    if (viewMode === 'map' && focused?.type === 'satellite') return;
 
-    if (isPanning && (isCameraLocked || currentFocusedBody)) {
+    if (isCameraLocked || currentFocusedBody) {
         if (isCameraLocked) {
             isCameraLocked = false;
             cameraAngleLock = false;
@@ -6112,9 +6312,34 @@ function onMouseDown(event) {
     }
 }
 
+// Touch: two fingers pinch (zoom) and pan together. The second finger isn't
+// a primary pointer, so onMouseDown never sees a pan; let go of the object
+// once both fingers move together, not for a pinch alone, so zooming in on
+// a planet keeps following it
+const TWO_FINGER_PAN_PX = 16;
+function setupTwoFingerPan(canvas) {
+    let start = null;
+    const mid = t => ({ x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 });
+    canvas.addEventListener('touchstart', e => {
+        start = e.touches.length === 2 ? mid(e.touches) : null;
+    }, { passive: true });
+    canvas.addEventListener('touchmove', e => {
+        if (!start || e.touches.length !== 2) return;
+        const m = mid(e.touches);
+        if (Math.hypot(m.x - start.x, m.y - start.y) < TWO_FINGER_PAN_PX) return;
+        start = null;
+        releaseFocusForPan();
+    }, { passive: true });
+    canvas.addEventListener('touchend', e => {
+        if (e.touches.length !== 2) start = null;
+    }, { passive: true });
+}
+
 function onMouseUp(event) {
     if (event.pointerId !== activeTapPointerId) return;
     activeTapPointerId = null;
+    // Lifting the finger after lighting a body with the touch sun isn't a tap
+    if (touchSun.justEnded) { touchSun.justEnded = false; return; }
     if (event.target.closest('#ui-container')) return;
     
     const dx = event.clientX - mouseDownPos.x;
@@ -6237,7 +6462,9 @@ function updateHoverState(clientX, clientY) {
             hoveredOrbit = null;
             hoveredConstellation = null;
             showTooltip(body.data, clientX, clientY);
+            updateTooltipPlace(body, clientX, clientY);
         } else if (body) {
+            updateTooltipPlace(body, clientX, clientY);
             updateTooltipPosition(clientX, clientY);
         }
     } else if (orbitIntersects.length > 0 && viewMode !== 'sizeCompare') {
@@ -6323,6 +6550,7 @@ function objectFacts(data) {
 }
 
 function showTooltip(data, x, y) {
+    setTooltipPlace(null); // (bodies with places set it again right after)
     const tooltip = document.getElementById('hover-tooltip');
     const nameEl = document.getElementById('tooltip-name');
     const contentEl = document.getElementById('tooltip-content');
@@ -6392,6 +6620,7 @@ function showTooltip(data, x, y) {
 }
 
 function showConstellationTooltip(constName, constId, x, y) {
+    setTooltipPlace(null); // (bodies with places set it again right after)
     const tooltip = document.getElementById('hover-tooltip');
     const nameEl = document.getElementById('tooltip-name');
     const contentEl = document.getElementById('tooltip-content');
@@ -6457,9 +6686,144 @@ function updateTooltipPosition(x, y, forceUpdate = false) {
 function hideTooltip() {
     const tooltip = document.getElementById('hover-tooltip');
     tooltip.classList.add('hidden');
+    setTooltipPlace(null);
+}
+
+// ── Place under the cursor (tooltip line under the name) ─────────────────
+// Earth: city / region / country from a free reverse-geocoding service
+// (asked only once the pointer rests, answers cached, ≤ 1 request a second;
+// only the pointed-at coordinates are sent). Moon and Mars: the smallest
+// named feature (SURFACE_FEATURES) containing the point.
+const PLACE_REST_MS = 350, PLACE_MIN_GAP_MS = 1000, PLACE_MIN_DISC_PX = 40;
+const placeCache = new Map();
+const place = { timer: null, busy: false, lastAsk: 0, x: 0, y: 0, curX: 0, curY: 0 };
+const _plRay = new THREE.Ray(), _plNdc = new THREE.Vector2(), _plSphere = new THREE.Sphere(), _plHit = new THREE.Vector3(), _plC = new THREE.Vector3();
+
+function setTooltipPlace(text, note = '') {
+    const el = document.getElementById('tooltip-place');
+    if (!el) return;
+    if (!text) { el.hidden = true; el.textContent = ''; return; }
+    el.textContent = text;
+    if (note) {
+        const n = document.createElement('span');
+        n.className = 'place-note';
+        n.textContent = note;
+        el.appendChild(n);
+    }
+    el.hidden = false;
+}
+
+// Latitude / east longitude under the pointer on a body, or null. The ray is
+// built from the camera's orientation (not setFromCamera, whose near-plane
+// point is float noise right at a surface), the same as the Earth close-up
+function surfaceLatLonUnderPointer(body, clientX, clientY) {
+    const mesh = body?.mesh;
+    const R = mesh?.userData.visualRadius;
+    if (!R) return null;
+    mesh.getWorldPosition(_plC);
+    const rect = renderer.domElement.getBoundingClientRect();
+    _plNdc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+    const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+    _plRay.origin.copy(camera.position);
+    _plRay.direction.set(_plNdc.x * tanHalf * camera.aspect, _plNdc.y * tanHalf, -1).applyQuaternion(camera.quaternion).normalize();
+    _plSphere.set(_plC, R);
+    if (!_plRay.intersectSphere(_plSphere, _plHit)) return null;
+    // Disc too small on screen to point at a particular spot
+    const dist = camera.position.distanceTo(_plC);
+    const discPx = R * (window.innerHeight / 2) / tanHalf / Math.max(dist, 1e-9);
+    const local = mesh.worldToLocal(_plHit.clone()).normalize();
+    // Inverse of the surface convention used for the home marker:
+    // (cos lat cos lon, sin lat, −cos lat sin lon)
+    return {
+        lat: THREE.MathUtils.radToDeg(Math.asin(THREE.MathUtils.clamp(local.y, -1, 1))),
+        lon: THREE.MathUtils.radToDeg(Math.atan2(-local.z, local.x)),
+        discPx
+    };
+}
+
+function featureAt(bodyName, lat, lon) {
+    const list = SURFACE_FEATURES[bodyName];
+    if (!list) return null;
+    const R = SURFACE_RADIUS_KM[bodyName];
+    const d2r = Math.PI / 180;
+    let best = null;
+    for (const f of list) {
+        // Great-circle distance in km
+        const c = Math.sin(lat * d2r) * Math.sin(f.lat * d2r)
+            + Math.cos(lat * d2r) * Math.cos(f.lat * d2r) * Math.cos((lon - f.lon) * d2r);
+        const km = Math.acos(THREE.MathUtils.clamp(c, -1, 1)) * R;
+        if (km <= f.km && (!best || f.km < best.km)) best = f;
+    }
+    return best;
+}
+
+// The geocoder's official names, shortened to what people say
+const SHORT_COUNTRY = {
+    US: 'USA', GB: 'UK', RU: 'Russia', KR: 'South Korea', KP: 'North Korea', IR: 'Iran', SY: 'Syria',
+    VE: 'Venezuela', BO: 'Bolivia', TZ: 'Tanzania', VN: 'Vietnam', LA: 'Laos', MD: 'Moldova',
+    CD: 'DR Congo', CG: 'Congo', TW: 'Taiwan', CZ: 'Czechia', NL: 'Netherlands'
+};
+
+function formatGeocode(j) {
+    const country = SHORT_COUNTRY[j.countryCode] || j.countryName;
+    const parts = [j.locality || j.city, j.principalSubdivision, country].filter(Boolean);
+    const unique = parts.filter((p, i) => parts.indexOf(p) === i);
+    if (unique.length) return unique.join(', ');
+    return j.localityInfo?.informative?.find(x => !/time zone/i.test(x.description || ''))?.name || '';
+}
+
+function updateTooltipPlace(body, clientX, clientY) {
+    const name = body?.data?.name;
+    if (viewMode !== 'map' || (name !== 'Earth' && !SURFACE_FEATURES[name])) { setTooltipPlace(null); return; }
+    const ll = surfaceLatLonUnderPointer(body, clientX, clientY);
+    if (!ll || ll.discPx < PLACE_MIN_DISC_PX) { setTooltipPlace(null); return; }
+    if (name !== 'Earth') {
+        const f = featureAt(name, ll.lat, ll.lon);
+        setTooltipPlace(f?.name || null, f?.note || '');
+        return;
+    }
+    // Earth: cached answer for this ~1 km cell, else ask once the pointer
+    // rests. Hover runs every frame and Earth turns under a still pointer, so
+    // the rest is timed on the pointer and the spot is read when asking; the
+    // last answer stays up meanwhile
+    const key = placeKey(ll);
+    place.curX = clientX; place.curY = clientY;
+    if (placeCache.has(key)) { setTooltipPlace(placeCache.get(key)); return; }
+    if (place.busy) return;
+    const moved = Math.hypot(clientX - place.x, clientY - place.y) > 3;
+    if (place.timer && !moved) return;
+    clearTimeout(place.timer);
+    place.x = clientX; place.y = clientY;
+    place.timer = setTimeout(askEarthPlace, PLACE_REST_MS);
+}
+
+function placeKey(ll) {
+    return `${ll.lat.toFixed(2)},${ll.lon.toFixed(2)}`;
+}
+
+async function askEarthPlace() {
+    place.timer = null;
+    place.busy = true;
+    try {
+        const wait = PLACE_MIN_GAP_MS - (performance.now() - place.lastAsk);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        const body = hoveredBody;
+        if (body?.data?.name !== 'Earth' || viewMode !== 'map') return;
+        const ll = surfaceLatLonUnderPointer(body, place.curX, place.curY);
+        if (!ll || ll.discPx < PLACE_MIN_DISC_PX) return;
+        const key = placeKey(ll);
+        place.lastAsk = performance.now();
+        const res = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${ll.lat.toFixed(3)}&longitude=${ll.lon.toFixed(3)}&localityLanguage=en`);
+        if (!res.ok) return;
+        const text = formatGeocode(await res.json());
+        placeCache.set(key, text);
+        if (hoveredBody === body) setTooltipPlace(text);
+    } catch { /* offline or blocked: just no place line */ }
+    finally { place.busy = false; }
 }
 
 function showOrbitTooltip(planetName, x, y) {
+    setTooltipPlace(null); // (bodies with places set it again right after)
     const tooltip = document.getElementById('hover-tooltip');
     const nameEl = document.getElementById('tooltip-name');
     const contentEl = document.getElementById('tooltip-content');
@@ -6743,17 +7107,17 @@ function setPullFarStars(on) {
 const SCALE_TRANSITION_MS = 1600;
 let scaleTransition = null;
 
-// W / S: hold to glide the scale. Speed eases toward the target and back to
+// ↑ / ↓: hold to glide the scale. Speed eases toward the target and back to
 // zero on release, so moves start and stop smoothly (a tap is a small nudge).
 const SCALE_KEY_RATE = 0.2;   // slider units per second at full speed (0→1 in ~5 s)
 const SCALE_KEY_EASE = 0.2;   // time constant of each of two smoothing stages
-const scaleKeys = { KeyW: false, KeyS: false };
+const scaleKeys = { ArrowUp: false, ArrowDown: false };
 let scaleKeyDrive = 0, scaleKeyVelocity = 0, scaleKeyLastTime = 0;
 function updateScaleKeys() {
     const now = performance.now();
     const dt = Math.min((now - scaleKeyLastTime) / 1000, 0.1);
     scaleKeyLastTime = now;
-    const input = viewMode === 'map' ? (scaleKeys.KeyW ? 1 : 0) - (scaleKeys.KeyS ? 1 : 0) : 0;
+    const input = viewMode === 'map' ? (scaleKeys.ArrowUp ? 1 : 0) - (scaleKeys.ArrowDown ? 1 : 0) : 0;
     // Two first-order stages in series: speed follows an S-curve, so the
     // acceleration eases in too (one stage lurches into motion)
     const blend = 1 - Math.exp(-dt / SCALE_KEY_EASE);
@@ -7705,7 +8069,24 @@ function toggleShowStars() {
 // Place the Milky Way on Sgr A* (wherever the current scale puts it) and fade
 // it with the camera's distance from the Sun
 const _galCenter = new THREE.Vector3(), _drawSize = new THREE.Vector2();
+// Cursor for the galaxies' particle fan (device px, GL origin bottom-left)
+function cursorForFan() {
+    const dpr = renderer.getPixelRatio();
+    renderer.getDrawingBufferSize(_drawSize);
+    return {
+        x: lastMouseX * dpr, y: (window.innerHeight - lastMouseY) * dpr, dpr,
+        viewW: _drawSize.x, viewH: _drawSize.y,
+        inside: lastMouseX >= 0 && pointerInWindow && !isMouseOverUI && !HOVER_NONE_MQ.matches
+    };
+}
+
 function updateMilkyWayDisk() {
+    if (galaxies) {
+        const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+        renderer.getDrawingBufferSize(_drawSize);
+        updateGalaxies(galaxies, celestialBodies, camera, window.innerHeight / (2 * tanHalf), _drawSize.y / (2 * tanHalf),
+            camera.position.distanceTo(controls.target), viewMode === 'map', cursorForFan());
+    }
     if (!milkyWay) return;
     const sgr = celestialBodies.get('Sagittarius A*');
     // The sky's band belongs to the view from home: it fades as you travel
@@ -7720,13 +8101,7 @@ function updateMilkyWayDisk() {
     renderer.getDrawingBufferSize(_drawSize);
     const pxPerUnit = _drawSize.y / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2));
     const focusDist = camera.position.distanceTo(controls.target);
-    // Cursor for the particle fan (device px, GL origin bottom-left)
-    const dpr = renderer.getPixelRatio();
-    const pointer = {
-        x: lastMouseX * dpr, y: (window.innerHeight - lastMouseY) * dpr, dpr,
-        viewW: _drawSize.x, viewH: _drawSize.y,
-        inside: lastMouseX >= 0 && pointerInWindow && !isMouseOverUI && !HOVER_NONE_MQ.matches
-    };
+    const pointer = cursorForFan();
     milkyWay.visible = updateMilkyWay(milkyWay, _galCenter, camera.position, pxPerUnit, focusDist, pointer,
         milkyWayDistanceMap()) > 0.001;
 }
@@ -7810,6 +8185,7 @@ function solarSystemPick(clientX, clientY, radiusPx) {
 
 // Fly out to a three-quarter view of the whole disk, from the side you're on
 function focusOnMilkyWay() {
+    trackEvent('focus/Milky Way');
     const center = milkyWay.getWorldPosition(new THREE.Vector3());
     const north = new THREE.Vector3().setFromMatrixColumn(milkyWay.userData.basis, 2).normalize();
     const toCam = camera.position.clone().sub(center).normalize();
@@ -7953,6 +8329,7 @@ function toggleViewMode(e, updateHistory = true, focusEarth = false) {
     }
 
     viewMode = viewMode === 'map' ? 'sizeCompare' : 'map';
+    if (viewMode === 'sizeCompare') trackEvent('size-comparison');
     
     // Safely update label if it exists
     const viewModeLabel = document.getElementById('view-mode');
@@ -7969,14 +8346,14 @@ function toggleViewMode(e, updateHistory = true, focusEarth = false) {
     if (viewMode === 'sizeCompare') {
         // Disable zoom/pan (handled manually via scroll) but allow horizontal
         // orbit. Clamp polar angle so the user can't flip under or over objects.
+        compareFree = false;
         controls.enableZoom = false;
-        controls.enablePan = false;
+        controls.enablePan = true; // (a pan frees the camera: setCompareFree)
         controls.enableRotate = true;
         controls.minPolarAngle = Math.PI * 0.25; // 45° from top
         controls.maxPolarAngle = Math.PI * 0.75; // 45° from bottom
         
-        // Hide pan instructions
-        if (panControlHint) panControlHint.style.display = 'none';
+
 
         // Switch to size comparison view
         hideMapView();
@@ -8002,6 +8379,7 @@ function toggleViewMode(e, updateHistory = true, focusEarth = false) {
         
     } else {
         // Re-enable full OrbitControls for map view and remove polar clamp
+        compareFree = false;
         controls.enableZoom = true;
         controls.enablePan = true;
         controls.enableRotate = true;
@@ -8539,10 +8917,16 @@ function updateHomeIndicator() {
     let distanceKm = 0;
     // (AU imported from celestialData.js)
     
+    // Size Comparison: the real distance from the object you're looking at
+    // to Earth (the lineup's own spacing means nothing)
+    let compareName = null;
     if (viewMode === 'sizeCompare') {
-        // In size compare mode, 1 unit = 2000 km
-        const distanceUnits = camera.position.distanceTo(homePosition);
-        distanceKm = distanceUnits * 2000;
+        compareName = flyToAnimation?.bodyName || currentFocusedBody;
+        const real = compareName && celestialBodies.get(compareName);
+        distanceKm = !real || compareName === 'Earth' ? 0
+            : real.isDistant && real.data?.distance ? real.data.distance
+            : getCurrentDistanceToEarth(real.data);
+        if (!Number.isFinite(distanceKm)) distanceKm = 0;
     } else {
         // Map mode calculations
         if (currentFocusedBody === 'Earth' || !currentFocusedBody) {
@@ -8583,8 +8967,9 @@ function updateHomeIndicator() {
     let distanceText;
     // (the "Solar System" marker counts as distant for layout, but its view is
     // of the planets: km / AU, not "0.0 Ly")
-    const isSolarSystemView = currentFocusedBody === 'Solar System'
-        || !(currentFocusedBody && celestialBodies.get(currentFocusedBody) && celestialBodies.get(currentFocusedBody).isDistant);
+    const shownName = viewMode === 'sizeCompare' ? compareName : currentFocusedBody;
+    const isSolarSystemView = shownName === 'Solar System'
+        || !(shownName && celestialBodies.get(shownName) && celestialBodies.get(shownName).isDistant);
     
     if (isSolarSystemView && distanceKm < 0.1 * LY) {
         distanceText = formatDistance(distanceKm, true);
@@ -8594,8 +8979,12 @@ function updateHomeIndicator() {
             distanceText = `${distanceLy.toFixed(1)} Ly`;
         } else if (distanceLy < 1000) {
             distanceText = `${Math.round(distanceLy)} Ly`;
-        } else {
+        } else if (distanceLy < 1e6) {
             distanceText = `${(distanceLy / 1000).toFixed(1)}k Ly`;
+        } else if (distanceLy < 1e9) {
+            distanceText = `${(distanceLy / 1e6).toFixed(1)} million Ly`;
+        } else {
+            distanceText = `${(distanceLy / 1e9).toFixed(2)} billion Ly`;
         }
     }
 
@@ -8603,13 +8992,15 @@ function updateHomeIndicator() {
     // Earth, Earth from across the Solar System or the stars, the Milky Way
     // once the whole galaxy is a dot (the same point where it's picked as one
     // object). Always "You": FreakinSpace → "freak in space", pointed at you
-    let homeName = userCity;
+    let homeName = viewMode === 'sizeCompare' ? 'Earth' : userCity;
     if (viewMode === 'map') {
         const earthR = earthMesh.geometry?.parameters?.radius || 1.0;
         if (milkyWayScreenRadius() <= MILKY_WAY_PICK_MAX_PX) homeName = 'Milky Way';
         else if (camera.position.distanceTo(homePosition) / earthR > 50) homeName = 'Earth';
     }
-    homeLabel.textContent = `You (${homeName}) - ${distanceText}`;
+    // (looking at Earth itself in Size Comparison: no distance)
+    homeLabel.textContent = viewMode === 'sizeCompare' && distanceKm === 0
+        ? `You (${homeName})` : `You (${homeName}) - ${distanceText}`;
 
     // Transform home position to camera space to check if it's in front
     const homeInCameraSpace = homePosition.clone().applyMatrix4(camera.matrixWorldInverse);
@@ -8774,6 +9165,8 @@ function setupStellarComparison() {
             && (target.isContentEditable
                 || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
         if (isTyping || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
+        // Shift held: plain ↑ / ↓ glide the distance scale now
+        if (!event.shiftKey) { if (event.key !== 'Shift') sequenceIndex = 0; return; }
 
         if (event.key === toggleSequence[sequenceIndex]) {
             sequenceIndex += 1;
@@ -9596,6 +9989,7 @@ function limitSizeComparisonVelocity(velocity, start, end, duration) {
 function focusOnSizeComparisonObject(name) {
     const body = sizeComparisonObjects.get(name);
     if (!body || !body.mesh) return;
+    setCompareFree(false);
 
     const inheritedMotion = getSizeComparisonMotion(flyToAnimation);
     
@@ -9809,6 +10203,7 @@ function populateObjectList() {
         'Exoplanets': [],
         'Stars': [],
         'Black Holes': [],
+        'Galaxies': [],
         'Small Bodies': []
     };
 
@@ -9865,8 +10260,12 @@ function populateObjectList() {
             categories['Exoplanets'].push({ name, body });
         } else if (type === 'star' || type === 'neutronstar') {
             categories['Stars'].push({ name, body });
+        } else if (type === 'galaxy') {
+            categories['Galaxies'].push({ name, body });
         }
     });
+    // Our own galaxy (not a regular body: see milkyWayBody)
+    if (milkyWayBody && viewMode === 'map') categories['Galaxies'].push({ name: 'Milky Way', body: milkyWayBody });
 
     // Helper function to sort array based on sort mode
     const sortByMode = (array, mode) => {
@@ -9937,7 +10336,9 @@ function populateObjectList() {
             // Get size category or comparative size
             let sizeLabel = '';
             if (body.data.radius) {
-                if (['galaxy', 'nebula', 'cluster'].includes(body.type)) {
+                if (body.type === 'galaxy') {
+                    sizeLabel = `${Math.round(2 * body.data.radius / LY / 1000)}k ly`; // across
+                } else if (['nebula', 'cluster'].includes(body.type)) {
                     sizeLabel = getComparativeSize(body.data.radius);
                 } else {
                     sizeLabel = getSizeCategory(body.data.radius, body.type);
@@ -10575,7 +10976,7 @@ function setupCompareTouchNav() {
     }, { passive: true });
 
     canvas.addEventListener('touchmove', (e) => {
-        if (viewMode !== 'sizeCompare' || e.touches.length !== 2 || pinchDist === null) return;
+        if (viewMode !== 'sizeCompare' || compareFree || e.touches.length !== 2 || pinchDist === null) return;
         const d = touchDist(e.touches);
         const ratio = d / pinchDist;
         // Re-baseline after each step so a long continuous pinch keeps stepping

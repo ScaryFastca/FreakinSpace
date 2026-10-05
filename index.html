@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>FreakinSpace - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=45">
+    <link rel="stylesheet" href="css/styles.css?v=48">
     <script type="importmap">
     {
         "imports": {
@@ -13,6 +13,11 @@
         }
     }
     </script>
+    <!-- Visitor counts (GoatCounter: no cookies, nothing personal). The
+         page view is counted by hand so refreshes (reload) don't count -->
+    <script data-goatcounter="https://scaryfast.goatcounter.com/count" data-goatcounter-settings='{"no_onload": true}'
+        async src="//gc.zgo.at/count.js"
+        onload="if (performance.getEntriesByType('navigation')[0]?.type !== 'reload') window.goatcounter.count()"></script>
 </head>
 <body>
     <div id="ui-container">
@@ -49,41 +54,56 @@
         
         <div id="controls-info">
             <button id="controls-info-close" type="button" aria-label="Hide controls" title="Hide">×</button>
-            <div class="control-hint">
-                <span class="key">Drag</span> to rotate
-            </div>
-            <div class="control-hint" id="pan-control-hint">
-                <span class="key">Shift+Drag</span> or <span class="key">Middle Mouse</span> to pan
-            </div>
-            <div class="control-hint">
-                <span class="key">Scroll</span> to zoom in & out
-            </div>
-            <div class="control-hint">
-                <span class="key">Ctrl+Drag</span> to roll the view
-            </div>
-            <div class="control-hint">
-                <span class="key">Click</span> an object to focus
-            </div>
-            <div class="control-hint">
-                <span class="key">A</span> / <span class="key">D</span> slow down / speed up time
-            </div>
-            <div class="control-hint">
-                <span class="key">W</span> / <span class="key">S</span> spread out / compress distances
-            </div>
-            <div class="control-hint">
-                <span class="key">Q</span> hide / show orbit lines
-            </div>
-            <div class="control-hint">
-                <span class="key">E</span> / <span class="key">M</span> / <span class="key">I</span> fly to Earth / the Moon / the ISS
-            </div>
-            <div class="control-hint">
-                <span class="key">G</span> desktop globe mode
-            </div>
-            <div class="control-hint">
-                <span class="key">R</span> back to the present time
-            </div>
-            <div class="control-hint">
-                <span class="key">H</span> hide / show the interface
+            <div class="controls-cols">
+                <div class="controls-col">
+                    <div class="control-hint">
+                        <span class="key">Drag</span> to rotate
+                    </div>
+                    <div class="control-hint" id="pan-control-hint">
+                        <span class="key">Shift+Drag</span> or <span class="key">Middle Mouse</span> to pan
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">Scroll</span> to zoom in & out
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">Ctrl+Drag</span> to roll the view
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">Click</span> an object to focus
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">← →</span> slow down / speed up time
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">↑ ↓</span> spread out / compress distances
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">Q</span> hide / show orbit lines
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">G</span> desktop globe mode
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">R</span> back to the present time
+                    </div>
+                    <div class="control-hint">
+                        <span class="key">H</span> hide / show the interface
+                    </div>
+                </div>
+                <div class="controls-col">
+                    <div class="controls-heading">Fly to</div>
+                    <div class="fly-keys">
+                        <span class="key">S</span><span>Sun, again for Saturn</span>
+                        <span class="key">M</span><span>Moon, then Mars, Mercury</span>
+                        <span class="key">E</span><span>Earth</span>
+                        <span class="key">V</span><span>Venus</span>
+                        <span class="key">J</span><span>Jupiter</span>
+                        <span class="key">U</span><span>Uranus</span>
+                        <span class="key">N</span><span>Neptune</span>
+                        <span class="key">P</span><span>Pluto</span>
+                        <span class="key">I</span><span>the ISS</span>
+                    </div>
+                </div>
             </div>
         </div>
         <button id="controls-info-button" type="button" hidden
@@ -92,6 +112,7 @@
 
         <div id="hover-tooltip" class="hidden">
             <h3 id="tooltip-name"></h3>
+            <div id="tooltip-place" hidden></div>
             <div id="tooltip-content"></div>
         </div>
 
@@ -354,6 +375,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=287"></script>
+    <script type="module" src="js/main.js?v=307"></script>
 </body>
 </html>

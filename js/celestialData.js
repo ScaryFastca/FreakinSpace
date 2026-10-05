@@ -644,13 +644,37 @@ export const nearbyStars = [
         subtype: "spiral",
         distance: 2537000 * LY, // 2.537 million LY
         direction: { x: 121.23, y: -22.45, z: -98.67 },
-        radius: 110000000000, // ~110,000 light years radius
+        radius: 76000 * LY, // stellar disk radius (~152,000 ly across)
         displayRadius: 40,
         color: 0xDDDDBB,
         emissive: 0xCCCCAA,
         emissiveIntensity: 0.4,
         temperature: "Billions of stars",
         description: "Closest major galaxy to Milky Way, on collision course in 4.5 billion years"
+    },
+    {
+        name: "Large Magellanic Cloud",
+        type: "galaxy",
+        subtype: "irregular",
+        distance: 163000 * LY,
+        direction: { x: 0, y: -1, z: 0 },
+        radius: 16000 * LY,
+        displayRadius: 30,
+        color: 0xDDDDCC,
+        temperature: "~30 billion stars",
+        description: "Satellite galaxy of the Milky Way, home of the Tarantula Nebula and R136a1"
+    },
+    {
+        name: "Small Magellanic Cloud",
+        type: "galaxy",
+        subtype: "irregular",
+        distance: 200000 * LY,
+        direction: { x: 0, y: -1, z: 0 },
+        radius: 9500 * LY,
+        displayRadius: 25,
+        color: 0xDDDDCC,
+        temperature: "~7 billion stars",
+        description: "Dwarf irregular galaxy orbiting the Milky Way, being pulled apart by the LMC"
     },
     // More Black Holes
     {
@@ -843,7 +867,7 @@ export const nearbyStars = [
         color: 0x99BBFF,
         emissive: 0x77AAFF,
         emissiveIntensity: 1.5,
-        mass: "~250-300 Solar masses",
+        mass: "~200 Solar masses",
         temperature: "46,000 K",
         description: "Most massive and luminous known star, Wolf-Rayet star in Large Magellanic Cloud"
     },
@@ -972,7 +996,7 @@ export const nearbyStars = [
         subtype: "spiral",
         distance: 2720000 * LY,
         direction: { x: -145.2, y: 89.3, z: -112.7 },
-        radius: 60000000000, // ~60,000 ly
+        radius: 30000 * LY, // ~60,000 ly across
         displayRadius: 35,
         color: 0xDDDDCC,
         emissive: 0xCCCCBB,
@@ -986,7 +1010,7 @@ export const nearbyStars = [
         subtype: "spiral",
         distance: 23000000 * LY,
         direction: { x: 234.5, y: -178.9, z: 67.2 },
-        radius: 38000000000, // ~38,000 ly
+        radius: 38000 * LY, // ~76,000 ly across
         displayRadius: 30,
         color: 0xDDDDCC,
         emissive: 0xCCCCBB,
@@ -1000,7 +1024,7 @@ export const nearbyStars = [
         subtype: "lenticular",
         distance: 29350000 * LY,
         direction: { x: -189.4, y: 234.8, z: -45.6 },
-        radius: 25000000000, // ~25,000 ly
+        radius: 25000 * LY, // ~50,000 ly across
         displayRadius: 28,
         color: 0xCCCCAA,
         emissive: 0xBBBB99,
@@ -1505,8 +1529,10 @@ const REAL_STAR_COORDS = {
     "Orion Nebula": { ra: 83.82, dec: -5.39 },
     "Andromeda Galaxy": { ra: 10.68, dec: 41.27 },
     "M87*": { ra: 187.7, dec: 12.4 },
-    "TON 618": { ra: 186.2, dec: 20.8 },
-    "Phoenix A*": { ra: 8.35, dec: -42.4 },
+    "TON 618": { ra: 187.10, dec: 31.48 },
+    "Phoenix A*": { ra: 356.18, dec: -42.72 },
+    "Large Magellanic Cloud": { ra: 80.89, dec: -69.76 },
+    "Small Magellanic Cloud": { ra: 13.19, dec: -72.83 },
     "J0529-4351": { ra: 82.35, dec: -43.85 },
     "Gaia BH1": { ra: 97.44, dec: -0.01 },
     "Gargantua (Interstellar)": { ra: 266.42, dec: -29.01 },
@@ -1529,7 +1555,7 @@ const REAL_STAR_COORDS = {
     "Polaris": { ra: 37.95, dec: 89.26 },
     "Triangulum Galaxy": { ra: 23.46, dec: 30.66 },
     "Whirlpool Galaxy": { ra: 202.48, dec: 47.2 },
-    "Sombrero Galaxy": { ra: 192.48, dec: -11.62 },
+    "Sombrero Galaxy": { ra: 189.998, dec: -11.62 },
     "Ring Nebula": { ra: 283.4, dec: 33.03 },
     "Eagle Nebula": { ra: 274.7, dec: -13.8 },
     "Omega Centauri": { ra: 201.7, dec: -47.48 },
@@ -1658,7 +1684,7 @@ export const OBJECT_FACTS = {
     "UY Scuti": "So big that light would take about 7 hours to travel once around it.",
     "VY Canis Majoris": "A dying hypergiant throwing off enormous clouds of gas and dust.",
     "WOH G64": "A giant in another galaxy (the LMC), recently caught turning into a yellow hypergiant.",
-    "R136a1": "The most massive star known, roughly 200–300 times the mass of the Sun.",
+    "R136a1": "The heaviest star known, about 200 times the mass of the Sun. Not the biggest, though: supergiants like Betelgeuse are far wider but much lighter.",
     "VV Cephei A": "A red supergiant spilling gas onto a hot blue companion star.",
     "Mu Cephei": "Herschel's 'Garnet Star', one of the reddest stars you can see by eye.",
     "KY Cygni": "One of the largest stars in the Milky Way, hidden behind thick dust.",
@@ -1667,6 +1693,8 @@ export const OBJECT_FACTS = {
     "Deneb": "One of the farthest stars you can see by eye, about 2,600 light-years away.",
     "Spica": "Really two hot stars orbiting so closely that they squash each other into egg shapes.",
     "Polaris": "Sits within a degree of the north celestial pole, so it barely moves in our sky.",
+    "Large Magellanic Cloud": "A small galaxy orbiting ours, easy to see by eye from the southern hemisphere. R136a1, the heaviest star known, is in it.",
+    "Small Magellanic Cloud": "The Large Magellanic Cloud's little partner, slowly being torn apart by it.",
     "Triangulum Galaxy": "Under very dark skies, one of the farthest things you can see by eye.",
     "Whirlpool Galaxy": "Its spiral arms are being stirred up by a smaller galaxy tugging on it.",
     "Sombrero Galaxy": "A bright core and a dark lane of dust make it look like a wide-brimmed hat.",
@@ -1682,3 +1710,59 @@ export const OBJECT_FACTS = {
     "Thestias": "A giant planet a little over twice Jupiter's mass, orbiting Pollux.",
     "Pistol Star": "One of the most luminous stars known; the gas it shed formed the Pistol Nebula."
 };
+
+// Named places on the Moon and Mars for the hover tooltip: latitude, east
+// longitude (degrees) and a radius in km. The smallest feature containing the
+// point under the cursor wins (a crater inside a mare names the crater).
+export const SURFACE_FEATURES = {
+    Moon: [
+        { name: 'Oceanus Procellarum', note: 'Ocean of Storms', lat: 18.4, lon: -57.4, km: 1300 },
+        { name: 'Mare Imbrium', note: 'Sea of Showers', lat: 32.8, lon: -15.6, km: 560 },
+        { name: 'Mare Serenitatis', note: 'Sea of Serenity', lat: 28.0, lon: 17.5, km: 350 },
+        { name: 'Mare Tranquillitatis', note: 'Sea of Tranquility', lat: 8.5, lon: 31.4, km: 440 },
+        { name: 'Mare Crisium', note: 'Sea of Crises', lat: 17.0, lon: 59.1, km: 280 },
+        { name: 'Mare Fecunditatis', note: 'Sea of Fertility', lat: -7.8, lon: 51.3, km: 420 },
+        { name: 'Mare Nectaris', note: 'Sea of Nectar', lat: -15.2, lon: 35.5, km: 170 },
+        { name: 'Mare Nubium', note: 'Sea of Clouds', lat: -21.3, lon: -16.6, km: 360 },
+        { name: 'Mare Humorum', note: 'Sea of Moisture', lat: -24.4, lon: -38.6, km: 195 },
+        { name: 'Mare Frigoris', note: 'Sea of Cold', lat: 56.0, lon: 1.4, km: 400 },
+        { name: 'Mare Moscoviense', note: 'Sea of Moscow, far side', lat: 27.3, lon: 147.9, km: 140 },
+        { name: 'South Pole–Aitken basin', note: "one of the largest impact craters in the Solar System", lat: -53, lon: -169, km: 1250 },
+        { name: 'Tycho crater', note: 'its bright rays stretch across the Moon', lat: -43.3, lon: -11.2, km: 43 },
+        { name: 'Copernicus crater', lat: 9.6, lon: -20.1, km: 47 },
+        { name: 'Kepler crater', lat: 8.1, lon: -38.0, km: 16 },
+        { name: 'Aristarchus crater', note: 'the brightest spot on the Moon', lat: 23.7, lon: -47.4, km: 20 },
+        { name: 'Plato crater', lat: 51.6, lon: -9.4, km: 51 },
+        { name: 'Clavius crater', lat: -58.4, lon: -14.4, km: 113 },
+        { name: 'Grimaldi crater', lat: -5.2, lon: -68.6, km: 86 },
+        { name: 'Tsiolkovskiy crater', note: 'far side', lat: -20.4, lon: 129.1, km: 92 },
+        { name: 'Apollo 11 landing site', note: 'first people on the Moon, 1969', lat: 0.67, lon: 23.47, km: 25 },
+        { name: 'Apollo 12 landing site', lat: -3.01, lon: -23.42, km: 20 },
+        { name: 'Apollo 14 landing site', lat: -3.65, lon: -17.47, km: 20 },
+        { name: 'Apollo 15 landing site', note: 'first lunar rover', lat: 26.13, lon: 3.63, km: 20 },
+        { name: 'Apollo 16 landing site', lat: -8.97, lon: 15.5, km: 20 },
+        { name: 'Apollo 17 landing site', note: 'last people on the Moon, 1972', lat: 20.19, lon: 30.77, km: 20 },
+        { name: "Chang'e 4 landing site", note: 'first landing on the far side, 2019', lat: -45.44, lon: 177.6, km: 20 }
+    ],
+    Mars: [
+        { name: 'Olympus Mons', note: 'the tallest volcano in the Solar System', lat: 18.65, lon: -133.8, km: 300 },
+        { name: 'Ascraeus Mons', lat: 11.92, lon: -104.08, km: 230 },
+        { name: 'Pavonis Mons', lat: 1.48, lon: -112.96, km: 190 },
+        { name: 'Arsia Mons', lat: -8.26, lon: -120.08, km: 220 },
+        { name: 'Elysium Mons', lat: 25.02, lon: 147.21, km: 200 },
+        { name: 'Valles Marineris', note: 'a canyon as long as North America is wide', lat: -13.9, lon: -59.2, km: 600 },
+        { name: 'Noctis Labyrinthus', note: 'Labyrinth of the Night', lat: -7.0, lon: -101.8, km: 550 },
+        { name: 'Hellas Planitia', note: 'a huge impact basin, 7 km deep', lat: -42.4, lon: 70.5, km: 1150 },
+        { name: 'Argyre Planitia', lat: -49.7, lon: -43.4, km: 900 },
+        { name: 'Utopia Planitia', note: 'Viking 2 and Zhurong landed here', lat: 49.7, lon: 118.0, km: 1650 },
+        { name: 'Acidalia Planitia', lat: 46.7, lon: -22.0, km: 1300 },
+        { name: 'Chryse Planitia', lat: 28.4, lon: -40.0, km: 800 },
+        { name: 'Syrtis Major', note: 'the first feature ever seen on Mars from Earth', lat: 8.4, lon: 69.5, km: 750 },
+        { name: 'Gale crater', note: 'Curiosity rover', lat: -5.4, lon: 137.8, km: 77 },
+        { name: 'Jezero crater', note: 'Perseverance rover and the Ingenuity helicopter', lat: 18.38, lon: 77.58, km: 25 },
+        { name: 'Viking 1 landing site', note: 'first successful Mars landing, 1976', lat: 22.27, lon: -48.22, km: 20 },
+        { name: 'North polar ice cap', lat: 88, lon: 0, km: 500 },
+        { name: 'South polar ice cap', lat: -87, lon: 0, km: 400 }
+    ]
+};
+export const SURFACE_RADIUS_KM = { Moon: 1737.4, Mars: 3389.5, Earth: 6371 };

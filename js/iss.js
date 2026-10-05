@@ -143,10 +143,42 @@ function loadModel(group, url, axes, prepare, onFail) {
             delete o.userData.name;
         });
 
-        if (modelHolder) group.remove(modelHolder);
-        group.add(holder);
-        modelHolder = holder;
+        const swapIn = () => {
+            if (modelHolder) group.remove(modelHolder);
+            group.add(holder);
+            modelHolder = holder;
+        };
+        // Compile its shaders in the background first: compiled on first
+        // draw, the detailed model froze the view for ~150 ms on the way in
+        // to Earth (the UFO chase, the trip home)
+        let root = group;
+        while (root.parent) root = root.parent;
+        // ...and send its textures (~20, mostly 1024²) to the GPU a couple per
+        // frame, rather than all in the frame it first appears
+        const textures = new Set();
+        holder.traverse(o => {
+            if (!o.isMesh) return;
+            (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+                for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap']) if (m[k]?.isTexture) textures.add(m[k]);
+            });
+        });
+        const queue = [...textures];
+        const upload = () => {
+            for (let i = 0; i < 2 && queue.length; i++) renderer.initTexture(queue.shift());
+            if (queue.length) requestAnimationFrame(upload); else swapIn();
+        };
+        if (renderer && lastCamera && renderer.compileAsync) {
+            renderer.compileAsync(holder, lastCamera, root).catch(() => {}).finally(upload);
+        } else swapIn();
     }, undefined, err => onFail?.(err));
+}
+
+let renderer = null, lastCamera = null;
+// Call once the renderer exists (after startup): builds the detailed model's
+// reflection map ahead of time instead of mid-flight
+export function prepareISS(r) {
+    renderer = r;
+    getEnvTexture();
 }
 
 // The simple NASA model: in the .glb the truss runs along Z, modules and
@@ -178,9 +210,18 @@ function getEnvTexture() {
     gr.addColorStop(0, '#1a1c22'); gr.addColorStop(0.45, '#3a4150');
     gr.addColorStop(0.55, '#6d8fb8'); gr.addColorStop(1, '#a9c4e0');   // dark space above, bright Earth below
     g.fillStyle = gr; g.fillRect(0, 0, 256, 128);
-    envTexture = new THREE.CanvasTexture(c);
-    envTexture.mapping = THREE.EquirectangularReflectionMapping;
-    envTexture.colorSpace = THREE.SRGBColorSpace;
+    const tex = new THREE.CanvasTexture(c);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    tex.colorSpace = THREE.SRGBColorSpace;
+    envTexture = tex;
+    if (renderer) {
+        // Pre-filtered once here; otherwise three does it (two shader
+        // compiles and renders) the first time the model is drawn
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        envTexture = pmrem.fromEquirectangular(tex).texture;
+        pmrem.dispose();
+        tex.dispose();
+    }
     return envTexture;
 }
 
@@ -231,6 +272,7 @@ const _up = new THREE.Vector3();
 export function updateISS(earthMesh, simDate, visible = true, camera = null) {
     if (!sat || !satrec || !earthMesh) return;
     getISSGroup();
+    if (camera) lastCamera = camera;
     if (!trailLine) {
         trailLine = new THREE.Line(
             new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(TRAIL_POINTS * 3), 3)),

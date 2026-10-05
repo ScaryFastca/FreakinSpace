@@ -114,11 +114,12 @@ no framework, no account.
 | North up / level horizon | Compass and horizon buttons (top left) | Same buttons |
 | Select / fly to | Click an object or pick it from the side panel | Tap |
 | Magnify a distant object | Rest the cursor on it for a second | – |
+| Light up a planet or moon | Point at it (the cursor becomes a little sun) | Touch and hold, then slide |
 | Play / pause | Space, or the play button | Play button |
-| Time speed | A / D keys, scroll over the time panel, − / + buttons, presets | Buttons and presets |
-| Spread out / compress distances | W / S, or the Scale slider | Scale slider |
+| Time speed | ← / → keys, scroll over the time panel, − / + buttons, presets | Buttons and presets |
+| Spread out / compress distances | ↑ / ↓ (hold), or the Scale slider | Scale slider |
 | Hide / show orbit lines | Q | – |
-| Fly to Earth / the Moon / the ISS | E / M / I | – |
+| Fly to the Sun, a planet, the Moon, Pluto or the ISS | S Sun (again: Saturn), M Moon (again: Mars, then Mercury), E Earth, V Venus, J Jupiter, U Uranus, N Neptune, P Pluto, I ISS | – |
 | Desktop globe mode | G, or the Globe button | Globe button |
 | Back to the present time | R, or the Now button | Now button |
 | Hide / show the interface | H | – |

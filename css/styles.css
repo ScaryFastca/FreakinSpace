@@ -20,6 +20,9 @@ body {
     display: block;
     z-index: 0;
     touch-action: none; /* pinch/drag drive OrbitControls, not browser zoom/scroll */
+    -webkit-touch-callout: none; /* touch and hold lights a planet, no iOS callout */
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 #travel-streaks {
@@ -687,6 +690,31 @@ body {
 #sidebar.collapsed ~ #controls-info-button {
     left: 44px;
 }
+
+/* Two columns: mouse and general keys | the fly-to letters */
+.controls-cols {
+    display: flex;
+    gap: 28px;
+    align-items: flex-start;
+}
+.controls-heading {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #7fa6d6;
+    margin: 6px 0 8px;
+}
+.fly-keys {
+    display: grid;
+    grid-template-columns: auto auto;
+    column-gap: 10px;
+    row-gap: 6px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: #aaccff;
+    padding-right: 18px; /* (clear of the close button) */
+}
+.fly-keys .key { min-width: 0; width: 26px; padding: 3px 0; }
 
 .control-hint {
     font-size: 0.85rem;
@@ -2339,6 +2367,11 @@ body.ui-hidden #ui-container * {
     opacity: 0.45;
     cursor: default;
 }
+
+/* Place under the cursor (Earth: city / region / country; Moon, Mars: named features) */
+#tooltip-place { margin: -4px 0 8px; color: #cfe3ff; font-size: 0.8rem; line-height: 1.3; }
+#tooltip-place[hidden] { display: none; }
+#tooltip-place .place-note { display: block; color: #8fa8c8; font-size: 0.72rem; }
 
 /* "Did you know" line under the tooltip's data rows, and in the info panel */
 .tooltip-fact {

@@ -3,7 +3,7 @@
 // the visitor's "You" spot with lasers and rockets, then leaves. The camera
 // rides home with them (main.js starts the trip home). Not in the README.
 import * as THREE from 'three';
-import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=287';
+import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=307';
 
 const FLEET = 6;
 const RISE_S = 0.7;       // lift off Mars
@@ -231,7 +231,6 @@ function startTravel(f, earth) {
         fleet.tripUp = camUp.addScaledVector(fleet.tripDir, -camUp.dot(fleet.tripDir));
         if (fleet.tripUp.lengthSq() < 1e-8) fleet.tripUp.set(0, 1, 0).addScaledVector(fleet.tripDir, -fleet.tripDir.y);
         fleet.tripUp.normalize();
-        fleet.settleFrom = null;
         // Drone heading: the fleet's direction of travel, allowed to swing
         // round only gradually (it starts up off Mars, may loop back)
         fleet.heading = pathTangent(fleet.path, 0, new THREE.Vector3());
@@ -280,14 +279,16 @@ function chaseCamera(f, earth, k, dt) {
     earth.getWorldPosition(_earthC);
     const cityN = _v.copy(f.n).applyQuaternion(_q);
     _north.set(0, 1, 0).applyQuaternion(_q);
-    // Arrive: swing round Earth's centre from wherever the chase has the camera
-    // to straight above the city, descending gradually (never across Earth)
+    // Arrive: swing round the FLEET (not Earth) from the chase spot to straight
+    // above the city, staying as close as the chase was. (Swinging round
+    // Earth's centre left the camera thousands of km up while the fleet
+    // dropped onto the city: it shrank out of sight, then the camera plunged.)
+    // The fleet comes down along the city's up, so the chase spot behind it
+    // is above the city already and the swing is short
     const settle = THREE.MathUtils.smoothstep(k, 0.7, 1);
     if (settle > 0) {
-        if (!fleet.settleFrom) fleet.settleFrom = camera.position.clone().sub(_earthC);
-        const finalRel = _w.copy(cityN).multiplyScalar(f.R + CITY_VIEW_KM * f.km);
-        const arcPos = swingVec(fleet.settleFrom, finalRel, settle).add(_earthC);
-        _off.lerp(arcPos.sub(_sub), Math.min(settle * 4, 1)); // hand the path over to the arc quickly
+        const finalOff = _w.copy(cityN).multiplyScalar((CITY_VIEW_KM - HOLD_ALT_KM) * f.km);
+        swingVec(_off.clone(), finalOff, settle, _off);
         // Keep watching the fleet as it drops onto the city; only at the very
         // end look straight down (the fleet is between the camera and the
         // ground by then, so it stays in view)

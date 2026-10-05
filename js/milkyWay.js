@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=287';
+import { raDecToAppFrame } from './celestialData.js?v=307';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing
@@ -134,22 +134,9 @@ function buildPoints() {
     return g;
 }
 
-const vertexShader = /* glsl */`
-    attribute vec3 tint;
-    attribute float size;
-    attribute float bright;
-    attribute float fanSet;
-    uniform float uPxPerUnit;   // pixels per scene unit at distance 1
-    // Placement: particle positions are light-years in the galactic frame;
-    // they're turned into Sun-relative light-years (uBasis, uCenterLy) and
-    // then laid out with the same distance mapping as the stars (see
-    // mapDistLy in this file), times a factor easing from 1 near the Sun to
-    // uK at the centre's distance so the centre lands on Sgr A* (see kAt)
-    uniform mat3 uBasis;
-    uniform vec3 uCenterLy;
-    uniform float uStarU, uU0, uD0, uTrueU, uW, uBlend, uK, uCenterDist;
-    uniform float uOpacity;
-    uniform float uNearFade;    // scene units: points closer than this fade out
+// Cursor fan GLSL, shared with the other galaxies (galaxies.js). Needs the
+// TRAIL_N define and a per-particle `fanSet` attribute (alternating 0/1)
+export const FAN_GLSL_UNIFORMS = /* glsl */`
     // Cursor fan (device px, GL origin bottom-left; z = strength 0..1)
     uniform vec3 uCursor;
     uniform vec3 uTrail[TRAIL_N];
@@ -157,11 +144,8 @@ const vertexShader = /* glsl */`
     uniform float uWakeR;
     uniform float uSpin;
     uniform vec2 uViewport;
-    varying vec3 vColor;
-    varying float vAlpha;
-    #include <common>
-    #include <logdepthbuf_pars_vertex>
-
+`;
+export const FAN_GLSL_FUNCTIONS = /* glsl */`
     vec2 rotateAbout(vec2 p, vec2 c, float a) {
         vec2 d = p - c;
         float cs = cos(a), sn = sin(a);
@@ -203,6 +187,42 @@ const vertexShader = /* glsl */`
         return rotateAbout(p, c, 2.4 * s * g);
     }
 
+    // Swirl a vertex (clip space) round the cursor and its wake; a: alpha
+    void applyFan(inout vec4 clip, inout float a) {
+        if ((uCursor.z > 0.001 || uTrail[0].z > 0.001) && clip.w > 0.0) {
+            vec2 pix = (clip.xy / clip.w * 0.5 + 0.5) * uViewport;
+            // Wake first (oldest to newest), then the fan at the cursor on top
+            for (int i = TRAIL_N - 1; i >= 0; i--) {
+                if (uTrail[i].z > 0.001) pix = wake(pix, uTrail[i].xy, uWakeR, uTrail[i].z);
+            }
+            if (uCursor.z > 0.001) pix = fan(pix, uCursor.xy, uFanR, uCursor.z, a);
+            clip.xy = (pix / uViewport * 2.0 - 1.0) * clip.w;
+        }
+    }
+`;
+
+const vertexShader = /* glsl */`
+    attribute vec3 tint;
+    attribute float size;
+    attribute float bright;
+    attribute float fanSet;
+    uniform float uPxPerUnit;   // pixels per scene unit at distance 1
+    // Placement: particle positions are light-years in the galactic frame;
+    // they're turned into Sun-relative light-years (uBasis, uCenterLy) and
+    // then laid out with the same distance mapping as the stars (see
+    // mapDistLy in this file), times a factor easing from 1 near the Sun to
+    // uK at the centre's distance so the centre lands on Sgr A* (see kAt)
+    uniform mat3 uBasis;
+    uniform vec3 uCenterLy;
+    uniform float uStarU, uU0, uD0, uTrueU, uW, uBlend, uK, uCenterDist;
+    uniform float uOpacity;
+    uniform float uNearFade;    // scene units: points closer than this fade out
+${FAN_GLSL_UNIFORMS}    varying vec3 vColor;
+    varying float vAlpha;
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+
+${FAN_GLSL_FUNCTIONS}
     float mapDistLy(float d) {
         float lin = d * uStarU;
         if (uBlend <= 0.0) return lin;
@@ -222,15 +242,7 @@ const vertexShader = /* glsl */`
         vec4 mv = viewMatrix * vec4(pLy * uUnitsPerLy, 1.0);
         gl_Position = projectionMatrix * mv;
         float a = bright * uOpacity;
-        if ((uCursor.z > 0.001 || uTrail[0].z > 0.001) && gl_Position.w > 0.0) {
-            vec2 pix = (gl_Position.xy / gl_Position.w * 0.5 + 0.5) * uViewport;
-            // Wake first (oldest to newest), then the fan at the cursor on top
-            for (int i = TRAIL_N - 1; i >= 0; i--) {
-                if (uTrail[i].z > 0.001) pix = wake(pix, uTrail[i].xy, uWakeR, uTrail[i].z);
-            }
-            if (uCursor.z > 0.001) pix = fan(pix, uCursor.xy, uFanR, uCursor.z, a);
-            gl_Position.xy = (pix / uViewport * 2.0 - 1.0) * gl_Position.w;
-        }
+        applyFan(gl_Position, a);
         float px = size * uUnitsPerLy * uPxPerUnit / max(-mv.z, 1e-9);
         // Nearby points would be huge soft blobs over whatever you're looking at
         a *= smoothstep(uNearFade * 0.3, uNearFade, -mv.z);
@@ -388,8 +400,18 @@ const FAN_SPIN = 1.4;               // rad/s
 const FAN_EASE_S = 0.25;            // fan fade in/out time constant
 
 function updateFan(group, pointer, allowed) {
-    const fan = group.userData.fan;
-    const u = group.userData.material.uniforms;
+    stepFan(group.userData.fan, group.userData.material.uniforms, pointer, allowed);
+}
+
+export const FAN_DEFINES = { TRAIL_N };
+export function makeFanUniforms() {
+    return { uCursor: { value: new THREE.Vector3() }, uTrail: { value: Array.from({ length: TRAIL_N }, () => new THREE.Vector3()) },
+        uFanR: { value: 180 }, uWakeR: { value: 48 }, uSpin: { value: 0 }, uViewport: { value: new THREE.Vector2(1, 1) } };
+}
+export function newFanState() { return { level: 0, trail: [], lastTime: 0, spin: 0 }; }
+
+// One frame of a fan: ease it in or out, lay down the wake, fill the uniforms
+export function stepFan(fan, u, pointer, allowed) {
     const now = performance.now() / 1000;
     const dt = Math.min(fan.lastTime ? now - fan.lastTime : 0, 0.1);
     fan.lastTime = now;
