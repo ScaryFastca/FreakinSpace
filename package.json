@@ -1,7 +1,7 @@
 {
-  "name": "spacemap",
+  "name": "freakinspace",
   "version": "1.0.0",
-  "description": "SpaceMap visualization",
+  "description": "FreakinSpace visualization",
   "main": "js/main.js",
   "scripts": {
     "start": "npx serve ."

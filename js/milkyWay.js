@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=248';
+import { raDecToAppFrame } from './celestialData.js?v=250';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing
@@ -446,4 +446,97 @@ export function suspendMilkyWayFan(group, suspended) {
     } else if (group.userData.fanSaved) {
         [u.uCursor.value.z, u.uTrail.value[0].z] = group.userData.fanSaved;
     }
+}
+
+// ── Milky Way in the night sky ──────────────────────────────────────────
+// The band as seen from home, painted on the sky sphere: brightest and widest
+// toward Sagittarius (the centre), warm there and bluish-white elsewhere,
+// broken into star clouds by noise and crossed by dust lanes, with the Great
+// Rift splitting it from Cygnus down to Sagittarius. Drawn behind everything
+// (skybox: depth ignored, at the far end of the view), additively.
+const skyVertexShader = /* glsl */`
+    varying vec3 vDir;
+    void main() {
+        vDir = position;
+        vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0);
+        gl_Position = vec4(p.xy, p.w * 0.99999, p.w);
+    }
+`;
+
+const skyFragmentShader = /* glsl */`
+    uniform vec3 uGx, uGy, uGz;   // galactic axes: centre, l = 90°, north pole
+    uniform float uGlow;
+    varying vec3 vDir;
+    float hash(vec3 p) {
+        p = fract(p * 0.3183099 + 0.1);
+        p *= 17.0;
+        return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+    float noise(vec3 x) {
+        vec3 i = floor(x), f = fract(x);
+        f = f * f * (3.0 - 2.0 * f);
+        return mix(mix(mix(hash(i), hash(i + vec3(1, 0, 0)), f.x),
+                       mix(hash(i + vec3(0, 1, 0)), hash(i + vec3(1, 1, 0)), f.x), f.y),
+                   mix(mix(hash(i + vec3(0, 0, 1)), hash(i + vec3(1, 0, 1)), f.x),
+                       mix(hash(i + vec3(0, 1, 1)), hash(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+    }
+    float fbm(vec3 p) {
+        float v = 0.0, a = 0.5;
+        for (int i = 0; i < 5; i++) { v += a * noise(p); p *= 2.03; a *= 0.5; }
+        return v;
+    }
+    void main() {
+        vec3 d = normalize(vDir);
+        float ld = degrees(atan(dot(d, uGy), dot(d, uGx)));        // longitude, 0 = centre
+        float bd = degrees(asin(clamp(dot(d, uGz), -1.0, 1.0)));  // latitude
+        // Band: thicker and brighter toward the centre; bulge around it
+        float centre = exp(-pow(ld / 55.0, 2.0));
+        float width = 4.5 + 4.5 * centre;
+        float band = exp(-pow(bd / width, 2.0)) * (0.3 + 0.7 * centre);
+        float bulge = exp(-(ld * ld + bd * bd * 2.2) / (2.0 * 11.0 * 11.0));
+        // Star clouds (noise on the direction, so there's no seam)
+        float clouds = 0.35 + 1.8 * fbm(d * 9.0) * fbm(d * 27.0 + 3.1);
+        // Fine grain: the band is unresolved stars, not a smooth cloud
+        float grain = 0.65 + 0.7 * noise(d * 240.0);
+        // Dust: patchy lanes hugging the plane, and the Great Rift just north
+        // of it from Cygnus (l ≈ 70°) to Sagittarius
+        float rift = exp(-pow((bd - 1.5 - 1.5 * sin(radians(ld) * 3.0)) / 2.4, 2.0))
+            * smoothstep(80.0, 60.0, ld) * smoothstep(-20.0, -2.0, ld);
+        // (the lane wanders and changes width, so it reads as clouds of dust
+        // rather than a ruled line)
+        float laneB = 2.4 * (fbm(d * 5.0) - 0.5);
+        float laneW = 0.9 + 2.2 * fbm(d * 4.0 + 11.0);
+        float lane = exp(-pow((bd - laneB) / laneW, 2.0));
+        // Combined like layers of fog (adding them saturated into a flat
+        // dark slab where the rift crosses the lane), each broken up by noise
+        rift *= smoothstep(0.25, 0.65, fbm(d * 8.0 + 2.0));
+        lane *= smoothstep(0.25, 0.7, fbm(d * 12.0 + 7.0) + 0.12);
+        float dust = 1.0 - (1.0 - 0.8 * rift) * (1.0 - 0.65 * lane);
+        float I = (band * clouds * grain + bulge * (0.8 + 0.4 * grain)) * (1.0 - 0.9 * dust);
+        vec3 col = mix(vec3(0.72, 0.8, 1.0), vec3(1.0, 0.86, 0.68), clamp(centre * 0.7 + bulge, 0.0, 1.0));
+        gl_FragColor = vec4(col * I * uGlow, 1.0);
+    }
+`;
+
+export function createMilkyWaySkyGlow() {
+    const b = galacticBasis();
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 48), new THREE.ShaderMaterial({
+        vertexShader: skyVertexShader, fragmentShader: skyFragmentShader,
+        uniforms: { uGx: { value: b.x }, uGy: { value: b.y }, uGz: { value: b.z }, uGlow: { value: 0 } },
+        side: THREE.BackSide, transparent: true, depthTest: false, depthWrite: false,
+        blending: THREE.AdditiveBlending
+    }));
+    mesh.name = 'milkyWaySkyGlow';
+    mesh.renderOrder = -2; // before the sky's stars
+    mesh.frustumCulled = false;
+    mesh.raycast = () => {};
+    return mesh;
+}
+
+// level: the user's slider, 0..1; fade: 0..1 (gone out among the stars)
+export function setMilkyWaySkyGlow(mesh, level, fade) {
+    // Eased (^1.5) so the low end of the slider stays subtle
+    const glow = 0.45 * Math.pow(level, 1.5) * fade;
+    mesh.material.uniforms.uGlow.value = glow;
+    mesh.visible = glow > 1e-4;
 }

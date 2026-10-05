@@ -1,4 +1,4 @@
-// Procedural Texture Generator for SpaceMap
+// Procedural Texture Generator for FreakinSpace
 // Generates planet and star textures using HTML5 Canvas
 
 export function generatePlanetTexture(type, color, seed = Math.random(), name = '') {

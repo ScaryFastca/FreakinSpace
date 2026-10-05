@@ -1,4 +1,4 @@
-// Celestial body data for SpaceMap
+// Celestial body data for FreakinSpace
 // Distances in km, periods in Earth days, radii in km
 
 export const AU = 149597870.7; // km per astronomical unit

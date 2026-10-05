@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=248';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=248';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=250';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=250';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=248';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=248';
-import { initCheeseMoon } from './cheeseMoon.js?v=248';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan } from './milkyWay.js?v=248';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=248';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=248';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=248';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=248';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=250';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=250';
+import { initCheeseMoon } from './cheeseMoon.js?v=250';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=250';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=250';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=250';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=250';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=250';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=248';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=248';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=250';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=250';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -620,7 +620,7 @@ let currentZoomLevel = 'EARTH_MOON';
 let currentFocusedBody = null;
 let scaleMode = 'compressed'; // 'compressed' or 'realistic'
 let orbitalMode = 'aligned'; // aligned, realistic, custom
-const CUSTOM_ORBITS_KEY = 'spacemap-custom-orbits-v1';
+const CUSTOM_ORBITS_KEY = 'spacemap-custom-orbits-v1'; // old app name kept: renaming would drop saved orbits
 let customOrbitAngles = Object.create(null);
 try {
     const saved = JSON.parse(localStorage.getItem(CUSTOM_ORBITS_KEY));
@@ -639,6 +639,13 @@ let mikoIndicatorActive = false; // Konami-code easter egg: CodeMiko arrow on Ur
 let showStars = true; // Background real-sky starfield
 let showMilkyWay = true; // 3D Milky Way disk (fades in as you leave the Solar System)
 let milkyWay = null;
+let milkyWaySkyGlow = null; // the band across the night sky (part of the star field)
+// Milky Way glow slider, 0..1 (Stars menu); remembered between visits
+const MW_GLOW_KEY = 'milkyWayGlow:v1';
+let milkyWayGlowLevel = (() => {
+    const v = parseFloat(localStorage.getItem(MW_GLOW_KEY));
+    return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 1) : 0.6;
+})();
 let milkyWayBody = null; // hover/click stand-in when the whole galaxy is a dot on screen
 const MILKY_WAY_DATA = {
     name: 'Milky Way',
@@ -2681,7 +2688,8 @@ function buildStarFieldFromData(stars) {
         group.add(points);
     });
 
-    group.add(createMilkyWayHaze());
+    milkyWaySkyGlow = createMilkyWaySkyGlow();
+    group.add(milkyWaySkyGlow);
 
     if (constellationsCache) {
         group.add(buildConstellationLinesAndLabels(constellationsCache));
@@ -2690,68 +2698,6 @@ function buildStarFieldFromData(stars) {
     starField = group;
     starField.visible = showStars;
     scene.add(starField);
-}
-
-// Faint blue-white haze scattered along the galactic plane to suggest the
-// Milky Way band. Points are spread with a gaussian ~12 deg off the plane.
-function createMilkyWayHaze() {
-    // Galactic north pole (RA 192.85948, Dec 27.12825), transformed into the
-    // app's ecliptic frame the same way the star data was.
-    const eps = THREE.MathUtils.degToRad(23.4393);
-    const cosE = Math.cos(eps), sinE = Math.sin(eps);
-    const ra = THREE.MathUtils.degToRad(192.85948);
-    const dec = THREE.MathUtils.degToRad(27.12825);
-    const ex = Math.cos(dec) * Math.cos(ra);
-    const ey = Math.cos(dec) * Math.sin(ra);
-    const ez = Math.sin(dec);
-    // equatorial -> ecliptic (rotate about X), then map to app frame (Y = north)
-    const n = new THREE.Vector3(ex, -ey * sinE + ez * cosE, ey * cosE + ez * sinE).normalize();
-
-    // Orthonormal basis (u, v) spanning the galactic plane.
-    let u = new THREE.Vector3(0, 1, 0).cross(n);
-    if (u.lengthSq() < 1e-6) u = new THREE.Vector3(1, 0, 0).cross(n);
-    u.normalize();
-    const v = new THREE.Vector3().crossVectors(n, u).normalize();
-
-    const spread = THREE.MathUtils.degToRad(12);
-    const count = 4000;
-    const positions = [];
-    const colors = [];
-    const gaussian = () => {
-        // Box-Muller
-        let a = 0, bb = 0;
-        while (a === 0) a = Math.random();
-        while (bb === 0) bb = Math.random();
-        return Math.sqrt(-2 * Math.log(a)) * Math.cos(2 * Math.PI * bb);
-    };
-    for (let i = 0; i < count; i++) {
-        const theta = Math.random() * Math.PI * 2;
-        const lat = gaussian() * spread; // offset from the plane
-        const inPlane = Math.cos(lat);
-        const dir = new THREE.Vector3()
-            .addScaledVector(u, inPlane * Math.cos(theta))
-            .addScaledVector(v, inPlane * Math.sin(theta))
-            .addScaledVector(n, Math.sin(lat))
-            .normalize();
-        positions.push(dir.x, dir.y, -dir.z);
-        const tint = 0.09 + Math.random() * 0.06;
-        colors.push(tint * 0.75, tint * 0.85, tint); // dim white-blue
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-    const material = new THREE.PointsMaterial({
-        size: 1.0,
-        vertexColors: true,
-        transparent: true,
-        opacity: 0.5,
-        sizeAttenuation: false,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-    });
-    const points = new THREE.Points(geometry, material);
-    points.renderOrder = -1;
-    return points;
 }
 
 function createStarField() {
@@ -7493,6 +7439,13 @@ const _galCenter = new THREE.Vector3(), _drawSize = new THREE.Vector2();
 function updateMilkyWayDisk() {
     if (!milkyWay) return;
     const sgr = celestialBodies.get('Sagittarius A*');
+    // The sky's band belongs to the view from home: it fades as you travel
+    // out, where the 3D disk fades in (same distances)
+    if (milkyWaySkyGlow && sgr) {
+        const r0 = sgr.mesh.getWorldPosition(_galCenter).length();
+        const away = r0 > 0 ? THREE.MathUtils.smoothstep(camera.position.length() / r0, 0.04, 0.3) : 0;
+        setMilkyWaySkyGlow(milkyWaySkyGlow, milkyWayGlowLevel, 1 - away);
+    }
     if (!showMilkyWay || viewMode !== 'map' || !sgr) { milkyWay.visible = false; return; }
     sgr.mesh.getWorldPosition(_galCenter);
     renderer.getDrawingBufferSize(_drawSize);
@@ -7648,6 +7601,8 @@ function syncStarsMenu() {
     const set = (id, on) => { const el = document.getElementById(id); if (el) el.checked = on; };
     set('menu-background-stars', showStars);
     set('menu-milky-way', showMilkyWay);
+    const glow = document.getElementById('menu-milky-way-glow');
+    if (glow && document.activeElement !== glow) glow.value = Math.round(milkyWayGlowLevel * 100);
     set('menu-big-stars', showBigStars);
     set('menu-constellations', showConstellations);
     set('menu-pull-far-stars', pullFarStars);
@@ -7691,6 +7646,10 @@ function setupPopupMenus() {
     });
     document.getElementById('menu-background-stars')?.addEventListener('change', toggleShowStars);
     document.getElementById('menu-milky-way')?.addEventListener('change', toggleMilkyWay);
+    document.getElementById('menu-milky-way-glow')?.addEventListener('input', e => {
+        milkyWayGlowLevel = e.target.value / 100;
+        try { localStorage.setItem(MW_GLOW_KEY, String(milkyWayGlowLevel)); } catch { /* private mode */ }
+    });
     document.getElementById('menu-big-stars')?.addEventListener('change', toggleBigStars);
     document.getElementById('menu-constellations')?.addEventListener('change', toggleConstellations);
     document.querySelectorAll('input[name="star-scale"]').forEach(r =>

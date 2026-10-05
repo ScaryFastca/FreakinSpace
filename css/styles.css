@@ -2260,6 +2260,8 @@ body.ui-hidden #magnifier { display: none; }
 .popup-heading-first { margin-top: 0; padding-top: 0; border-top: 0; }
 .scale-panel { min-width: 280px; left: 0; transform: none; } /* leftmost button: open rightward so it isn't cut off */
 #scale-slider { width: 100%; margin: 8px 0 2px; accent-color: #4a9eff; }
+.popup-slider-row { flex-wrap: wrap; }
+.popup-slider-row input[type="range"] { flex-basis: 100%; margin: 4px 0 0; accent-color: #4a9eff; }
 .scale-slider-labels { display: flex; justify-content: space-between; font-size: 0.72rem; color: #88aaff; }
 .scale-presets { display: flex; gap: 6px; margin: 10px 0 6px; }
 .scale-presets .tl-btn { flex: 1; font-size: 0.78rem; padding: 4px 6px; }

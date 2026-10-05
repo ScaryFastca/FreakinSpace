@@ -1,10 +1,10 @@
-# SpaceMap
+# FreakinSpace
 
 An interactive 3D map of the universe that runs in your browser. Fly from the
 streets below the International Space Station out past the planets to the
 largest stars known, with everything placed where it really is right now.
 
-**[Try it live →](https://scaryfast.ca/space/)**
+**[Try it live →](https://freakinspace.com/)**
 
 <img width="2555" height="1279" alt="image" src="https://github.com/user-attachments/assets/af801bdc-6485-40a3-af9e-00bd2dd24e6c" />
 
@@ -179,9 +179,9 @@ bump it when the CSS changes.
 | 3D engine | [Three.js](https://threejs.org/) r160 | MIT |
 
 CelesTrak asks that each network download a given satellite list no more than
-once every two hours. SpaceMap caches the lists in your browser to stay within that.
+once every two hours. FreakinSpace caches the lists in your browser to stay within that.
 
 ## Status
 
-SpaceMap is in beta, so expect rough edges and the odd inaccuracy. Questions or
+FreakinSpace is in beta, so expect rough edges and the odd inaccuracy. Questions or
 bug reports: [space@scaryfast.ca](mailto:space@scaryfast.ca) or open an issue.
