@@ -1,0 +1,12 @@
+# FreakinSpace (freakinspace.com, Apache on Hostineer)
+RewriteEngine On
+
+# Always use HTTPS
+RewriteCond %{HTTPS} off
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+# freakinspace.com/you shows the site as "FreakInSpace" (main.js checks the
+# path). Drop a trailing slash first: /you/ would make the page's relative
+# links (js/, css/) point inside a /you/ folder that doesn't exist.
+RewriteRule ^you/$ /you [R=301,L]
+RewriteRule ^you$ index.html [L]

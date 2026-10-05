@@ -540,6 +540,31 @@ body {
     font-size: 1.1rem;
 }
 
+/* Shown when the browser renders without the GPU (see checkSoftwareRendering) */
+.gpu-warning {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px 6px 14px;
+    background: rgba(60, 35, 0, 0.75);
+    border: 1px solid rgba(255, 170, 51, 0.7);
+    border-radius: 20px;
+    color: #ffcc66;
+    font-size: 0.78rem;
+    cursor: help;
+    backdrop-filter: blur(5px);
+}
+.gpu-warning[hidden] { display: none; }
+.gpu-warning button {
+    background: none;
+    border: 0;
+    color: inherit;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+}
+
 .header-btn .text {
     font-weight: 500;
     letter-spacing: 0.5px;
@@ -551,7 +576,10 @@ body {
     font-size: 2.5rem;
     font-weight: 300;
     letter-spacing: 4px;
-    text-transform: uppercase;
+    /* Small caps: capitals full height, the rest shorter capitals, so
+       FreakinSpace reads FREAKIN·SPACE (and FreakInSpace, on "you" links,
+       FREAK·IN·SPACE) */
+    font-variant-caps: small-caps;
     background: linear-gradient(135deg, #4a9eff 0%, #9d4aff 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;

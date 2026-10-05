@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=250';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=250';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=254';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=254';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=250';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=250';
-import { initCheeseMoon } from './cheeseMoon.js?v=250';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=250';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=250';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=250';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=250';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=250';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=254';
+import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=254';
+import { initCheeseMoon } from './cheeseMoon.js?v=254';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=254';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=254';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=254';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=254';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=254';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=250';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=250';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=254';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=254';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1407,7 +1407,50 @@ const _animIssUp = new THREE.Vector3();
 
 
 // Initialize the application
+// Arrived by a "you" link (you.freakinspace.com, freakinspace.com/you or
+// ?you): the name reads FreakInSpace, so with the "You" arrow it says the
+// visitor is the freak in space
+function applyYouVisit() {
+    const you = /^you\./i.test(location.hostname) || /^\/you\/?$/i.test(location.pathname)
+        || new URLSearchParams(location.search).has('you');
+    if (!you) return;
+    const h1 = document.querySelector('#header h1');
+    if (h1) h1.textContent = 'FreakInSpace';
+    document.title = document.title.replace('FreakinSpace', 'FreakInSpace');
+}
+
+// Browsers with hardware acceleration off (or a GPU they've blocked) draw
+// WebGL on the CPU: workable for simple pages, ~1 fps here, worst in Size
+// Comparison. Warn beside that button so it's seen before clicking.
+function checkSoftwareRendering() {
+    const el = document.getElementById('gpu-warning');
+    if (!el || sessionStorage.getItem('gpuWarningDismissed')) return;
+    let software = false;
+    try {
+        const gl = renderer.getContext();
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        const name = String(gl.getParameter(dbg ? dbg.UNMASKED_RENDERER_WEBGL : gl.RENDERER));
+        software = /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name);
+        if (!software) {
+            // The browser's own verdict: this refuses to start when it would be slow
+            const probe = document.createElement('canvas');
+            const ctx = probe.getContext('webgl2', { failIfMajorPerformanceCaveat: true })
+                || probe.getContext('webgl', { failIfMajorPerformanceCaveat: true });
+            if (!ctx) software = true;
+            else ctx.getExtension('WEBGL_lose_context')?.loseContext();
+        }
+    } catch { /* can't tell: stay quiet */ }
+    if (!software) return;
+    el.hidden = false;
+    document.getElementById('gpu-warning-close')?.addEventListener('click', e => {
+        e.stopPropagation();
+        el.hidden = true;
+        try { sessionStorage.setItem('gpuWarningDismissed', '1'); } catch { /* private mode */ }
+    });
+}
+
 function init() {
+    applyYouVisit();
     // Scene setup
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x000002);
@@ -1627,6 +1670,7 @@ function init() {
     if (sizeCompareBtn) {
         sizeCompareBtn.addEventListener('click', toggleViewMode);
     }
+    checkSoftwareRendering();
     
     document.getElementById('home-btn').addEventListener('click', () => flyToEarth());
 
@@ -2688,7 +2732,7 @@ function buildStarFieldFromData(stars) {
         group.add(points);
     });
 
-    milkyWaySkyGlow = createMilkyWaySkyGlow();
+    milkyWaySkyGlow = createMilkyWaySkyGlow(renderer);
     group.add(milkyWaySkyGlow);
 
     if (constellationsCache) {
@@ -8320,16 +8364,17 @@ function updateHomeIndicator() {
         }
     }
 
-    // Name home at the scale you're seeing it: your city near Earth, Earth
-    // from across the Solar System or the stars, the Milky Way once the whole
-    // galaxy is a dot (the same point where it's picked as one object)
-    let homeName = `You (${userCity})`;
+    // "You (…)", naming home at the scale you're seeing it: your city near
+    // Earth, Earth from across the Solar System or the stars, the Milky Way
+    // once the whole galaxy is a dot (the same point where it's picked as one
+    // object). Always "You": FreakinSpace → "freak in space", pointed at you
+    let homeName = userCity;
     if (viewMode === 'map') {
         const earthR = earthMesh.geometry?.parameters?.radius || 1.0;
         if (milkyWayScreenRadius() <= MILKY_WAY_PICK_MAX_PX) homeName = 'Milky Way';
         else if (camera.position.distanceTo(homePosition) / earthR > 50) homeName = 'Earth';
     }
-    homeLabel.textContent = `${homeName} - ${distanceText}`;
+    homeLabel.textContent = `You (${homeName}) - ${distanceText}`;
 
     // Transform home position to camera space to check if it's in front
     const homeInCameraSpace = homePosition.clone().applyMatrix4(camera.matrixWorldInverse);

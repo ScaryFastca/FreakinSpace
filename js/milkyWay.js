@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=250';
+import { raDecToAppFrame } from './celestialData.js?v=254';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing
@@ -518,11 +518,46 @@ const skyFragmentShader = /* glsl */`
     }
 `;
 
-export function createMilkyWaySkyGlow() {
+// Painting the band per pixel per frame (~30 noise lookups each) was heavy on
+// big high-DPI screens (Chrome slowed right down), so it's painted once into
+// a cube map at startup and the sky just looks it up.
+const SKY_BAKE_SIZE = 1024;       // per cube face: ~0.09° per texel
+const SKY_GLOW_MAX = 0.45;        // brightness at the top of the slider
+const bakeVertexShader = /* glsl */`
+    varying vec3 vDir;
+    void main() {
+        vDir = position;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+`;
+const skyLookupFragmentShader = /* glsl */`
+    uniform samplerCube uSky;
+    uniform float uGain;
+    varying vec3 vDir;
+    void main() {
+        gl_FragColor = vec4(textureCube(uSky, normalize(vDir)).rgb * uGain, 1.0);
+    }
+`;
+
+export function createMilkyWaySkyGlow(renderer) {
     const b = galacticBasis();
-    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 96, 48), new THREE.ShaderMaterial({
-        vertexShader: skyVertexShader, fragmentShader: skyFragmentShader,
-        uniforms: { uGx: { value: b.x }, uGy: { value: b.y }, uGz: { value: b.z }, uGlow: { value: 0 } },
+    // Bake: a camera at the centre of the painted sphere renders all six faces
+    const bakeScene = new THREE.Scene();
+    bakeScene.add(new THREE.Mesh(new THREE.SphereGeometry(1, 96, 48), new THREE.ShaderMaterial({
+        vertexShader: bakeVertexShader, fragmentShader: skyFragmentShader,
+        uniforms: { uGx: { value: b.x }, uGy: { value: b.y }, uGz: { value: b.z }, uGlow: { value: SKY_GLOW_MAX } },
+        side: THREE.BackSide, depthTest: false, depthWrite: false
+    })));
+    const target = new THREE.WebGLCubeRenderTarget(SKY_BAKE_SIZE, {
+        generateMipmaps: true, minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter
+    });
+    const cubeCamera = new THREE.CubeCamera(0.1, 10, target);
+    cubeCamera.update(renderer, bakeScene);
+    bakeScene.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), new THREE.ShaderMaterial({
+        vertexShader: skyVertexShader, fragmentShader: skyLookupFragmentShader,
+        uniforms: { uSky: { value: target.texture }, uGain: { value: 0 } },
         side: THREE.BackSide, transparent: true, depthTest: false, depthWrite: false,
         blending: THREE.AdditiveBlending
     }));
@@ -536,7 +571,7 @@ export function createMilkyWaySkyGlow() {
 // level: the user's slider, 0..1; fade: 0..1 (gone out among the stars)
 export function setMilkyWaySkyGlow(mesh, level, fade) {
     // Eased (^1.5) so the low end of the slider stays subtle
-    const glow = 0.45 * Math.pow(level, 1.5) * fade;
-    mesh.material.uniforms.uGlow.value = glow;
-    mesh.visible = glow > 1e-4;
+    const gain = Math.pow(level, 1.5) * fade;
+    mesh.material.uniforms.uGain.value = gain;
+    mesh.visible = gain > 1e-4;
 }

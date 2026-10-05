@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>FreakinSpace - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=35">
+    <link rel="stylesheet" href="css/styles.css?v=37">
     <script type="importmap">
     {
         "imports": {
@@ -37,6 +37,11 @@
                         <span class="icon">📏</span>
                         <span class="text">Size Comparison</span>
                     </a>
+                    <div id="gpu-warning" class="gpu-warning" hidden role="status"
+                        title="Your browser is drawing this 3D map without your graphics card, so it will be slow (Size Comparison especially). To fix it, turn on hardware acceleration: in Chrome or Edge, Settings → System → 'Use graphics acceleration when available', then relaunch the browser.">
+                        <span>⚠ Hardware acceleration is off: expect lag</span>
+                        <button id="gpu-warning-close" aria-label="Dismiss">×</button>
+                    </div>
                 </div>
             </div>
             <div id="zoom-level">Earth-Moon System</div>
@@ -349,6 +354,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=250"></script>
+    <script type="module" src="js/main.js?v=254"></script>
 </body>
 </html>
