@@ -158,8 +158,26 @@ export const tileLighting = {
     uNightStrength: { value: 0 },
     nightMap: { value: BLACK },
     uUseStreetMap: { value: 1 },  // street map share on the night side (altitude fade × style)
-    uLightDetail: { value: 1 }    // share of imagery-shaped city lights (close-up detail)
+    uLightDetail: { value: 1 },   // share of imagery-shaped city lights (close-up detail)
+    // Cursor sun (set by main.js; shared with the globe's and clouds' shaders)
+    uTorchPosView: { value: new THREE.Vector3() },
+    uTorchIntensity: { value: 0 },
+    uTorchRange: { value: 1 }
 };
+export const TORCH_GLSL = /* glsl */`
+    // The cursor sun (main.js updateCursorSun): a point light in view space
+    // with the same cutoff falloff three.js uses for PointLight.distance
+    uniform vec3 uTorchPosView;
+    uniform float uTorchIntensity;
+    uniform float uTorchRange;
+    float torchLight(vec3 posView, vec3 normalView) {
+        if (uTorchIntensity <= 0.0) return 0.0;
+        vec3 L = uTorchPosView - posView;
+        float d = length(L);
+        float fall = pow(clamp(1.0 - pow(d / uTorchRange, 4.0), 0.0, 1.0), 2.0);
+        return uTorchIntensity * max(dot(normalView, L / d), 0.0) * fall;
+    }
+`;
 
 // Night-side style: 'map' (dark street map with labels) or 'lights' (the
 // globe's city lights). In 'lights' mode no street-map tiles are fetched.
@@ -175,10 +193,12 @@ const TILE_VERTEX = /* glsl */`
     varying vec2 vUv;
     varying vec2 vUv1;
     varying vec3 vNormalView;
+    varying vec3 vViewPos;
     void main() {
         vUv = uv;
         vUv1 = uv1;
         vNormalView = normalize(normalMatrix * normal);
+        vViewPos = (modelViewMatrix * vec4(position, 1.0)).xyz;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         #include <logdepthbuf_vertex>
     }`;
@@ -202,6 +222,8 @@ const TILE_FRAGMENT = /* glsl */`
     uniform float uNightStrength;
     uniform float uUseStreetMap;
     uniform float uLightDetail;
+    ${TORCH_GLSL}
+    varying vec3 vViewPos;
     varying vec2 vUv;
     varying vec2 vUv1;
     varying vec3 vNormalView;
@@ -209,6 +231,9 @@ const TILE_FRAGMENT = /* glsl */`
         #include <logdepthbuf_fragment>
         float sunDot = dot(normalize(vNormalView), uSunDirView);
         float night = smoothstep(0.1, -0.15, sunDot); // same twilight band as the globe
+        // Under the cursor sun the night side shows the lit imagery instead
+        float torch = torchLight(vViewPos, normalize(vNormalView));
+        night *= 1.0 - clamp(torch, 0.0, 1.0);
         vec3 street = texture2D(streetMap, vUv).rgb * uStreetGain;
         if (uHasLabels > 0.5) {
             vec4 label = texture2D(labelMap, vUv);
@@ -223,7 +248,7 @@ const TILE_FRAGMENT = /* glsl */`
         float ocean = (1.0 - smoothstep(0.03, 0.08, imagery.r)) * step(imagery.r * 3.0, imagery.b);
         imagery *= mix(1.0, uOceanGain, ocean);
         vec3 day = uHasDay > 0.5
-            ? imagery * RECIPROCAL_PI * (uSunIntensity * max(sunDot, 0.0) + uAmbient)
+            ? imagery * RECIPROCAL_PI * (uSunIntensity * max(sunDot, 0.0) + torch + uAmbient)
             : street;
         // City lights come from the globe's 8K night map, ~5 km per pixel: up
         // close a whole city is one flat glow. Shape it with the daytime

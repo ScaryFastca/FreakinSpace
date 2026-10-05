@@ -33,16 +33,20 @@ export function cloudLayerStatus() { return failed ? 'unavailable' : shell?.user
 // Sun direction (view space, shared with Earth's night lights), instead of a
 // full PBR light loop on every cloud pixel. Clouds cover the whole disc, so
 // per-pixel cost is what matters at high resolution.
-function buildShell(R, sunDirView) {
+// torch: the cursor sun's shared uniforms + GLSL (main.js passes them in, from
+// earthTiles.js, so there's one copy of the values)
+function buildShell(R, sunDirView, torch) {
     uniforms.uSunDirView = sunDirView;
+    if (torch) Object.assign(uniforms, torch.uniforms);
     material = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false });
     material.onBeforeCompile = shader => {
         Object.assign(shader.uniforms, uniforms);
-        shader.vertexShader = 'varying vec3 vCloudNormal;\n' + shader.vertexShader.replace(
+        shader.vertexShader = 'varying vec3 vCloudNormal;\nvarying vec3 vCloudView;\n' + shader.vertexShader.replace(
             '#include <project_vertex>',
-            '#include <project_vertex>\nvCloudNormal = normalize(normalMatrix * normal);'
+            '#include <project_vertex>\nvCloudNormal = normalize(normalMatrix * normal);\nvCloudView = mvPosition.xyz;'
         );
-        shader.fragmentShader = 'uniform float uCloudOpacity;\nuniform vec3 uSunDirView;\nvarying vec3 vCloudNormal;\n' + shader.fragmentShader
+        shader.fragmentShader = 'uniform float uCloudOpacity;\nuniform vec3 uSunDirView;\nvarying vec3 vCloudNormal;\nvarying vec3 vCloudView;\n'
+            + (torch ? torch.glsl : 'float torchLight(vec3 p, vec3 n) { return 0.0; }\n') + shader.fragmentShader
             .replace('#include <alphamap_fragment>', `#ifdef USE_ALPHAMAP
                 float cloud = texture2D(alphaMap, vAlphaMapUv).r; // single-channel map
                 diffuseColor.a *= uCloudOpacity * smoothstep(0.34, 0.9, cloud);
@@ -50,7 +54,8 @@ function buildShell(R, sunDirView) {
             // Sunlit white → soft terminator → dim blue-grey at night
             .replace('#include <color_fragment>', `#include <color_fragment>
                 float sunUp = dot(normalize(vCloudNormal), uSunDirView);
-                float day = smoothstep(-0.12, 0.25, sunUp);
+                float day = max(smoothstep(-0.12, 0.25, sunUp),
+                    clamp(torchLight(vCloudView, normalize(vCloudNormal)) / 3.5, 0.0, 1.0)); // cursor sun
                 diffuseColor.rgb *= mix(vec3(0.05, 0.06, 0.09), vec3(1.0), day) * (0.75 + 0.25 * clamp(sunUp, 0.0, 1.0));`);
     };
     material.customProgramCacheKey = () => 'cloud-shell-lite';
@@ -106,11 +111,11 @@ async function loadClouds(size) {
     loading = false;
 }
 
-export function setCloudLayer(on, earthMesh, { sunDirView } = {}) {
+export function setCloudLayer(on, earthMesh, { sunDirView, torch } = {}) {
     enabled = on;
     if (!earthMesh) return;
     if (!shell) {
-        shell = buildShell(earthMesh.userData.visualRadius || 1, sunDirView);
+        shell = buildShell(earthMesh.userData.visualRadius || 1, sunDirView, torch);
         // 2K is ample: the disc is rarely over ~2000 px wide, and the 4K map
         // is 32 MB of GPU memory (plus mipmaps) sampled on every cloud pixel
         shell.userData.size = '2048x1024';

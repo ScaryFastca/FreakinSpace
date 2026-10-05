@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=254';
+import { raDecToAppFrame } from './celestialData.js?v=264';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing
@@ -558,7 +558,11 @@ export function createMilkyWaySkyGlow(renderer) {
     const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 32), new THREE.ShaderMaterial({
         vertexShader: skyVertexShader, fragmentShader: skyLookupFragmentShader,
         uniforms: { uSky: { value: target.texture }, uGain: { value: 0 } },
-        side: THREE.BackSide, transparent: true, depthTest: false, depthWrite: false,
+        // Not "transparent": three.js draws transparent things after every
+        // solid object, so the glow landed on top of Earth's night side. In the
+        // solid pass with renderOrder −2 it's drawn first, and depth-tested at
+        // the far end of the view so anything in front still covers it.
+        side: THREE.BackSide, transparent: false, depthTest: true, depthWrite: false,
         blending: THREE.AdditiveBlending
     }));
     mesh.name = 'milkyWaySkyGlow';

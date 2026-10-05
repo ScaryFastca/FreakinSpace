@@ -1,19 +1,19 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=254';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=254';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=264';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=264';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=254';
-import { updateEarthTiles, tileLighting, setNightStyle } from './earthTiles.js?v=254';
-import { initCheeseMoon } from './cheeseMoon.js?v=254';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=254';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=254';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=254';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=254';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=254';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=264';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=264';
+import { initCheeseMoon } from './cheeseMoon.js?v=264';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=264';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=264';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=264';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=264';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=264';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU } from './celestialData.js?v=254';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=254';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=264';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=264';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -180,6 +180,14 @@ const earthNightUniforms = {
     uNightStrength: { value: 1.6 }
 };
 
+// The cursor sun's light for Earth's custom shaders (tiles, city lights,
+// clouds), which don't see three.js lights. One set of uniforms, owned by
+// earthTiles.js; updateCursorSun() fills them in
+const CURSOR_SUN_SHADER = {
+    uniforms: { uTorchPosView: tileLighting.uTorchPosView, uTorchIntensity: tileLighting.uTorchIntensity, uTorchRange: tileLighting.uTorchRange },
+    glsl: TORCH_GLSL
+};
+
 let earthNightTexture = null; // Promise<Texture>, loaded once
 let nightLightsScale = 1;      // city lights dimmed by the cheese-Moon disaster
 
@@ -199,13 +207,15 @@ function addEarthNightLights(material) {
         material.emissive.set(0xffffff);
         material.emissiveIntensity = 1;
         material.onBeforeCompile = shader => {
-            Object.assign(shader.uniforms, earthNightUniforms);
+            Object.assign(shader.uniforms, earthNightUniforms, CURSOR_SUN_SHADER.uniforms);
             shader.fragmentShader = shader.fragmentShader
-                .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirView;\nuniform float uNightStrength;')
+                .replace('#include <common>', '#include <common>\nuniform vec3 uSunDirView;\nuniform float uNightStrength;\n' + CURSOR_SUN_SHADER.glsl)
                 .replace('#include <emissivemap_fragment>', `
                     #ifdef USE_EMISSIVEMAP
-                        // 0 on the day side, 1 past the terminator, soft twilight band
-                        float night = smoothstep(0.1, -0.15, dot(normal, uSunDirView));
+                        // 0 on the day side, 1 past the terminator, soft twilight band;
+                        // city lights also fade where the cursor sun shines
+                        float night = smoothstep(0.1, -0.15, dot(normal, uSunDirView))
+                            * (1.0 - clamp(torchLight(-vViewPosition, normal), 0.0, 1.0));
                         totalEmissiveRadiance = texture2D(emissiveMap, vEmissiveMapUv).rgb * night * uNightStrength;
                     #endif`);
         };
@@ -1410,13 +1420,29 @@ const _animIssUp = new THREE.Vector3();
 // Arrived by a "you" link (you.freakinspace.com, freakinspace.com/you or
 // ?you): the name reads FreakInSpace, so with the "You" arrow it says the
 // visitor is the freak in space
+// Clicking the name flips it either way, and adds or drops ?you in the address
+// bar so a copied link carries the joke along.
 function applyYouVisit() {
     const you = /^you\./i.test(location.hostname) || /^\/you\/?$/i.test(location.pathname)
         || new URLSearchParams(location.search).has('you');
-    if (!you) return;
+    setYouName(you);
     const h1 = document.querySelector('#header h1');
-    if (h1) h1.textContent = 'FreakInSpace';
-    document.title = document.title.replace('FreakinSpace', 'FreakInSpace');
+    if (!h1) return;
+    h1.title = 'Freak in space?';
+    h1.addEventListener('click', () => {
+        const nowYou = h1.textContent !== 'FreakInSpace';
+        setYouName(nowYou);
+        if (nowYou) startHomeTrip(); // "...and this is where the freak lives"
+        // Subdomain and /you links already say it; only touch the query string
+        const url = new URL(location.href);
+        if (nowYou) url.searchParams.set('you', ''); else url.searchParams.delete('you');
+        history.replaceState(history.state, '', url.toString().replace('you=&', 'you&').replace(/you=$/, 'you'));
+    });
+}
+function setYouName(you) {
+    const h1 = document.querySelector('#header h1');
+    if (h1) h1.textContent = you ? 'FreakInSpace' : 'FreakinSpace';
+    document.title = document.title.replace(/Freak[iI]nSpace/, you ? 'FreakInSpace' : 'FreakinSpace');
 }
 
 // Browsers with hardware acceleration off (or a GPU they've blocked) draw
@@ -1540,6 +1566,12 @@ function init() {
     compareLight.visible = false;
     scene.add(compareLight);
     scene.add(compareLight.target);
+
+    // The cursor as a little sun (see updateCursorSun)
+    // Always in the scene, dimmed to 0 when unused: adding or removing a light
+    // makes three.js recompile every lit material (a hitch on each hover)
+    cursorSun = new THREE.PointLight(0xfff0d8, 0, 1, 0);
+    scene.add(cursorSun);
 
     // Create celestial bodies
     createSolarSystem();
@@ -4129,6 +4161,8 @@ function animate() {
     updateEarthTiles(celestialBodies.get('Earth')?.mesh, camera, renderer, viewMode === 'map');
     // Magnifier first: the main render then clears the whole canvas, so the
     // close-up doesn't linger in the canvas behind the scope's round frame
+    updateCursorSun();
+    updateHomeTrip();
     renderMagnifier();
     renderer.render(scene, camera);
 }
@@ -4184,6 +4218,135 @@ function updateSatelliteIntro() {
         : t < fadeIn + hold ? 1
         : 1 - THREE.MathUtils.smoothstep(t, fadeIn + hold, fadeIn + hold + fadeOut);
     setSatellitePreview(Math.max(a, 1e-4));
+}
+
+// ── Trip home ────────────────────────────────────────────────────────────
+// Flipping the name to FreakInSpace takes you to the visitor's city, from
+// wherever you're looking, with no detour to a preset view:
+//  - already low over Earth: Earth just turns under you to the city, at the
+//    same height (no zoom)
+//  - within the Solar System: one move that turns and descends onto the city
+//    (longer the farther out you start)
+//  - out among the stars: the return flight (turn, rush in with streaks)
+//    straight to a point above the city's side of Earth, then the descent
+const HOME_TRIP = {
+    diveMs: 4200,          // descent onto the city after the rush
+    spinMs: 3200,          // spin-only move when already low
+    cityAltKm: 45,         // whole city in view on the satellite map
+    spinOnlyBelowKm: 3000,
+    rushBeyondUnits: 50000, // same line flyToEarth uses for its interstellar return
+    rushMs: 6500,          // longer than a normal jump, so the opening turn is gentler
+    approachRadii: 12,     // the rush ends this far out, over the city
+    timeoutMs: 40000
+};
+let homeTrip = null;
+
+// The visitor's city as a direction in Earth's local frame (same convention
+// as the home marker)
+function homeCityDirLocal() {
+    const lat = THREE.MathUtils.degToRad(userLatitude), lon = THREE.MathUtils.degToRad(userLongitude);
+    return new THREE.Vector3(Math.cos(lat) * Math.cos(lon), Math.sin(lat), -Math.cos(lat) * Math.sin(lon));
+}
+
+function startHomeTrip() {
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return;
+    if (viewMode !== 'map') {
+        // Size Comparison: back to the map first (its own flight home), then descend
+        homeTrip = { t0: performance.now() };
+        flyToEarth(true);
+        return;
+    }
+    const R = earth.mesh.userData.visualRadius || 1;
+    const earthPos = earth.mesh.getWorldPosition(new THREE.Vector3());
+    const dist = camera.position.distanceTo(earthPos);
+    const altKm = (dist - R) / R * 6371;
+    const city = homeCityDirLocal();
+    homeTrip = null;
+    if (altKm < HOME_TRIP.spinOnlyBelowKm) {
+        flyToEarthSpot(city, HOME_TRIP.spinMs, Math.max(altKm, 1));
+        return;
+    }
+    if (dist < HOME_TRIP.rushBeyondUnits) {
+        // ~3 s from orbit, ~6 s from the outer planets
+        const ms = THREE.MathUtils.clamp(2400 + 900 * Math.log10(altKm / HOME_TRIP.cityAltKm), 3000, 7000);
+        flyToEarthSpot(city, ms, HOME_TRIP.cityAltKm);
+        return;
+    }
+    // Far: rush straight to a point over the city's side of Earth (the flight
+    // follows Earth along its orbit), then descend from there
+    const cityWorld = city.clone().applyQuaternion(earth.mesh.getWorldQuaternion(new THREE.Quaternion()));
+    const endPos = earthPos.clone().addScaledVector(cityWorld, R * HOME_TRIP.approachRadii);
+    focusRetarget = null;
+    earthSpotFlight = null;
+    currentFocusedBody = 'Earth';
+    updateSidebarSelection('Earth');
+    showBodyInfo(earth.data);
+    flyToAnimation = createInterstellarFlight(endPos, earthPos, 'Earth', { duration: HOME_TRIP.rushMs });
+    homeTrip = { t0: performance.now() };
+}
+
+function updateHomeTrip() {
+    if (!homeTrip) return;
+    if (flyToAnimation) return; // still on the way to Earth
+    const trip = homeTrip;
+    homeTrip = null;
+    if (viewMode !== 'map' || performance.now() - trip.t0 > HOME_TRIP.timeoutMs) return;
+    // Only descend if the flight actually got us home (not if the user took
+    // over the camera somewhere else along the way)
+    const earth = celestialBodies.get('Earth');
+    if (!earth) return;
+    const R = earth.mesh.userData.visualRadius || 1;
+    if (camera.position.distanceTo(earth.mesh.getWorldPosition(_csPos)) > R * 2000) return;
+    flyToEarthSpot(homeCityDirLocal(), HOME_TRIP.diveMs, HOME_TRIP.cityAltKm);
+}
+
+// ── Cursor sun ───────────────────────────────────────────────────────────
+// Hovering a planet, moon or other unlit body that's big enough on screen to
+// show its shape turns the cursor into a little sun and lights the body from
+// there: a warm light floats just in front of it toward the cursor, so you can
+// light up the night side, or sweep it round to an edge. Short range (a few
+// body radii) so the rest of the scene isn't touched; fades in and out.
+let cursorSun = null;
+const CURSOR_SUN = { intensity: 3.0, minRadiusPx: 12, ease: 0.15 };
+const _csPos = new THREE.Vector3(), _csCam = new THREE.Vector3(), _csHit = new THREE.Vector3(),
+    _csRay = new THREE.Raycaster(), _csNdc = new THREE.Vector2(), _csPlane = new THREE.Plane();
+let cursorSunLevel = 0;
+function updateCursorSun() {
+    if (!cursorSun) return;
+    const body = hoveredBody;
+    let target = 0, R = 0;
+    if (body?.mesh?.visible && lastMouseX >= 0 && !isMouseOverUI && !HOVER_NONE_MQ.matches && !mouseButtonsHeld
+        && body.type !== 'star' && !SELF_LIT_TYPES.has(body.data?.type) && body !== milkyWayBody) {
+        body.mesh.getWorldPosition(_csPos);
+        R = magnifierRadius(body.mesh);
+        const dist = camera.position.distanceTo(_csPos);
+        const radiusPx = R * (window.innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
+        if (R > 0 && radiusPx >= CURSOR_SUN.minRadiusPx && dist > R * 1.05) {
+            // Where the cursor ray crosses the plane through the body facing us
+            _csNdc.set(lastMouseX / window.innerWidth * 2 - 1, 1 - lastMouseY / window.innerHeight * 2);
+            _csRay.setFromCamera(_csNdc, camera);
+            _csCam.copy(camera.position).sub(_csPos).normalize();
+            _csPlane.setFromNormalAndCoplanarPoint(_csCam, _csPos);
+            if (_csRay.ray.intersectPlane(_csPlane, _csHit)) {
+                // Out from the centre toward the cursor (doubled, so the edge is
+                // lit from the side), then forward toward the camera
+                _csHit.sub(_csPos).multiplyScalar(2).clampLength(0, R * 4);
+                cursorSun.position.copy(_csPos).add(_csHit).addScaledVector(_csCam, R * 2.5);
+                cursorSun.distance = R * 8; // range: the hovered body and its close neighbourhood
+                target = 1;
+            }
+        }
+    }
+    cursorSunLevel += (target - cursorSunLevel) * CURSOR_SUN.ease;
+    if (cursorSunLevel < 0.01 && !target) cursorSunLevel = 0;
+    cursorSun.intensity = CURSOR_SUN.intensity * cursorSunLevel;
+    // Same light for Earth's own shaders (map tiles, city lights, clouds)
+    camera.updateMatrixWorld();
+    tileLighting.uTorchPosView.value.copy(cursorSun.position).applyMatrix4(camera.matrixWorldInverse);
+    tileLighting.uTorchIntensity.value = cursorSun.intensity;
+    tileLighting.uTorchRange.value = cursorSun.distance;
+    renderer.domElement.classList.toggle('cursor-sun', target === 1);
 }
 
 // ── Hover magnifier ──────────────────────────────────────────────────────
@@ -4405,7 +4568,11 @@ function prepareEarthSurfaceCamera() {
         // focus moved to another body (e.g. the ISS), focusOnBody has already
         // set that body's limits; overwriting them with Earth's (1.4 R) stopped
         // the flight short and blocked zooming until a second click.
-        if (earthSurfaceCam.active && currentFocusedBody === 'Earth') {
+        // Not while a spot flight is running: restoring the 1.4 R minimum then
+        // shoved the camera up to ~2,550 km for the whole flight (a jarring
+        // zoom out and back in when flying from one low spot to another); the
+        // flight hands back to the close-up camera when it lands
+        if (earthSurfaceCam.active && currentFocusedBody === 'Earth' && !earthSpotFlight) {
             controls.minDistance = R * 1.4;
             controls.rotateSpeed = 0.5;
         }
@@ -5279,6 +5446,10 @@ function showBodyInfo(data) {
     if (data.description) {
         html += `<div class="detail-row detail-block" style="flex-direction:column;gap:5px;margin-top:10px;"><span class="detail-label">Description:</span><span style="color:#ccc;font-size:0.85rem;line-height:1.4;">${data.description}</span></div>`;
     }
+    const didYouKnow = objectFacts(data);
+    if (didYouKnow.length) {
+        html += `<div class="detail-row detail-block" style="flex-direction:column;gap:5px;margin-top:10px;"><span class="detail-label">Did you know?</span>${didYouKnow.map(f => `<span class="info-fact">${f}</span>`).join('')}</div>`;
+    }
 
     // Add educational facts block
     let hasFacts = false;
@@ -6098,6 +6269,16 @@ function onMouseMove(event) {
     if (HOVER_NONE_MQ.matches) return;
 }
 
+// "Did you know" lines for an object: its own fact, plus the shadow note for
+// black holes whose fact doesn't already explain it
+function objectFacts(data) {
+    const out = [];
+    const own = OBJECT_FACTS[data?.name];
+    if (own) out.push(own);
+    if (data?.type === 'blackhole' && !/shadow/i.test(own || '')) out.push(BLACK_HOLE_SHADOW_FACT);
+    return out;
+}
+
 function showTooltip(data, x, y) {
     const tooltip = document.getElementById('hover-tooltip');
     const nameEl = document.getElementById('tooltip-name');
@@ -6157,6 +6338,7 @@ function showTooltip(data, x, y) {
     if (childCount > 0) {
         html += `<div class="tooltip-row"><span class="tooltip-label">Bodies:</span><span class="tooltip-value">${childCount}</span></div>`;
     }
+    objectFacts(data).forEach(f => { html += `<div class="tooltip-fact">${f}</div>`; });
 
     contentEl.innerHTML = html;
     
@@ -6635,7 +6817,7 @@ function setupWeatherMenu() {
     if (!box) return;
     const apply = on => {
         box.checked = on;
-        setCloudLayer(on, celestialBodies.get('Earth')?.mesh, { sunDirView: earthNightUniforms.uSunDirView });
+        setCloudLayer(on, celestialBodies.get('Earth')?.mesh, { sunDirView: earthNightUniforms.uSunDirView, torch: CURSOR_SUN_SHADER });
     };
     // Off by default (it costs GPU time on big screens); remember the choice
     apply(localStorage.getItem(WEATHER_CLOUDS_KEY) === 'on');
@@ -7718,8 +7900,11 @@ function applyViewModeFromUrl() {
     }
 }
 
-function toggleViewMode(e, updateHistory = true) {
+// focusEarth: the Home button (via flyToEarth) wants Earth; otherwise leaving
+// Size Comparison flies to whatever object was being looked at there
+function toggleViewMode(e, updateHistory = true, focusEarth = false) {
     finishCustomOrbitDrag(true);
+    const comparedName = viewMode === 'sizeCompare' && !focusEarth ? currentFocusedBody : null;
     if (e && e.preventDefault) {
         e.preventDefault();
     }
@@ -7788,7 +7973,7 @@ function toggleViewMode(e, updateHistory = true) {
 
         // Switch back to map view
         hideSizeComparisonView();
-        showMapView();
+        showMapView(comparedName);
         populateObjectList(); // Refresh sidebar with normal objects
         
         // Update URL to reflect Map mode (default)
@@ -7870,7 +8055,7 @@ function hideMapView() {
     hideTimelinePanel();
 }
 
-function showMapView() {
+function showMapView(focusName = null) {
     // Hide size comparison view
     hideSizeComparisonView();
     
@@ -7898,8 +8083,15 @@ function showMapView() {
     // Show timeline panel when entering map view
     showTimelinePanel();
     
-    // Reset camera to Earth view
-    flyToEarth();
+    // Fly to the object that was being compared (camera framed to keep home
+    // in view, as for any distant object), else back to Earth
+    if (focusName && focusName !== 'Earth' && celestialBodies.has(focusName)) {
+        syncMapPositions();
+        currentFocusedBody = null; // so focusOnBody flies instead of "already there"
+        focusOnBody(focusName);
+    } else {
+        flyToEarth();
+    }
     
     // Update visibility based on current zoom level
     updateZoomLevel();
@@ -10017,11 +10209,20 @@ function flyToEarth(showEarthInfo = false) {
     // If in size comparison mode, switch back to map view first
     // toggleViewMode calls showMapView which calls flyToEarth, so we can just return after toggling
     if (viewMode === 'sizeCompare') {
-        toggleViewMode();
+        toggleViewMode(null, true, true);
         return;
     }
+    syncMapPositions();
 
-    // Force calculate planet positions for map mode so Earth has its correct 3D coordinates
+    // Fly to Earth-centered view, zoomed out to show Sun and neighboring planets
+    const earthBody = celestialBodies.get('Earth');
+    if (!earthBody) return;
+    return flyToEarthFrom(earthBody, showEarthInfo);
+}
+
+// Planet and moon positions for the current date, right now (they aren't
+// updated while Size Comparison is showing)
+function syncMapPositions() {
     if (orbitalMode === 'realistic') {
         updateRealisticPositions(simDate, 'planets');
         updateRealisticPositions(simDate, 'moons');
@@ -10037,10 +10238,9 @@ function flyToEarth(showEarthInfo = false) {
         });
     }
     scene.updateMatrixWorld(true);
+}
 
-    // Fly to Earth-centered view, zoomed out to show Sun and neighboring planets
-    const earthBody = celestialBodies.get('Earth');
-    if (!earthBody) return;
+function flyToEarthFrom(earthBody, showEarthInfo) {
 
     const earthMesh = earthBody.mesh;
     
