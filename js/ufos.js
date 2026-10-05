@@ -3,6 +3,7 @@
 // the visitor's "You" spot with lasers and rockets, then leaves. The camera
 // rides home with them (main.js starts the trip home). Not in the README.
 import * as THREE from 'three';
+import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=287';
 
 const FLEET = 6;
 const RISE_S = 0.7;       // lift off Mars
@@ -104,7 +105,7 @@ export function launchUfos(scene, surfacePoint, center, radius, attack) {
         ufos.push(ufo);
     }
     scene.add(group);
-    fleet = { group, ufos, t0: now, normal, radius, sizeMars, attack, effects: [], tripStarted: false };
+    fleet = { group, ufos, t0: now, normal, radius, center: center.clone(), sizeMars, attack, effects: [], tripStarted: false, lastNow: now };
     return true;
 }
 
@@ -187,45 +188,132 @@ const _c = new THREE.Vector3(), _dir = new THREE.Vector3(), _upv = new THREE.Vec
     _cp = new THREE.Vector3(), _ct = new THREE.Vector3(), _fp = new THREE.Vector3(), _ft = new THREE.Vector3();
 const CITY_VIEW_KM = 45; // matches the trip home's landing height
 
-function chaseCamera(f, earth, k) {
-    const { camera, controls } = fleet.attack;
-    // Fleet centre, heading and current saucer size
-    _c.set(0, 0, 0);
-    fleet.ufos.forEach(u => _c.add(u.position));
-    _c.divideScalar(fleet.ufos.length);
-    const end = earth.localToWorld(cityPoint(f, 0, 0, HOLD_ALT_KM, _w));
-    _dir.copy(end).sub(_c);
-    if (_dir.lengthSq() < 1e-18) _dir.copy(f.n).applyQuaternion(_q).negate();
-    _dir.normalize();
-    const size = fleet.ufos[0].scale.x;
-    // Behind and a little above the fleet (above = world up, made square to the heading)
-    _upv.set(0, 1, 0).addScaledVector(_dir, -_dir.y);
-    if (_upv.lengthSq() < 1e-6) _upv.set(1, 0, 0);
-    _upv.normalize();
-    _cp.copy(_c).addScaledVector(_dir, -size * 16).addScaledVector(_upv, size * 5);
-    _ct.copy(_c).addScaledVector(_dir, size * 6);
-    // Final view: straight down on the city from 45 km, north up
-    const cityN = _v.copy(f.n).applyQuaternion(_q);
-    earth.getWorldPosition(_ft);
-    _fp.copy(_ft).addScaledVector(cityN, f.R + CITY_VIEW_KM * f.km);
-    const blend = THREE.MathUtils.smoothstep(k, 0.7, 1);
-    // Blend round Earth, not through it: swing the direction from Earth's
-    // centre (great circle) and ease the height geometrically, like the spot
-    // flights. A straight line from the chase spot to the city view cut
-    // through the planet (the camera ended up underground for a moment)
-    const R = f.R, minAlt = 20 * f.km;
-    const dirA = _cp.clone().sub(_ft), altA = Math.max(dirA.length() - R, minAlt);
-    dirA.normalize();
-    const dirB = cityN.clone(), altB = CITY_VIEW_KM * f.km;
-    const axis = new THREE.Vector3().crossVectors(dirA, dirB);
-    const angle = dirA.angleTo(dirB);
-    const dir = axis.lengthSq() > 1e-12 ? dirA.applyAxisAngle(axis.normalize(), angle * blend) : dirB;
-    const alt = Math.max(altA * Math.pow(altB / altA, blend), minAlt);
-    camera.position.copy(_ft).addScaledVector(dir, R + alt);
-    controls.target.lerpVectors(_ct, _ft, blend);
-    camera.up.set(0, 1, 0).lerp(_upv.set(0, 1, 0).applyQuaternion(_q), blend).normalize();
-    camera.lookAt(controls.target);
+function travelEase(k) {
+    k = Math.min(Math.max(k, 0), 1);
+    return k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
 }
+
+// The fleet centre's path, planned once when the trip starts, in world space.
+// Earth moves (orbit and spin) during the trip, so the drift of the landing
+// point since then is blended in, reaching all of it on arrival.
+function startTravel(f, earth) {
+    fleet.tripStarted = true;
+    const fromC = new THREE.Vector3(), endC = new THREE.Vector3();
+    fleet.ufos.forEach(u => fromC.add(u.position));
+    fromC.divideScalar(fleet.ufos.length);
+    earth.localToWorld(cityPoint(f, 0, 0, HOLD_ALT_KM, endC));
+    const cityUp = f.n.clone().applyQuaternion(_q);
+    const earthPos = earth.getWorldPosition(new THREE.Vector3());
+    fleet.path = makePath(fromC, endC, {
+        // Up off Mars a few of its radii, then for Earth; down onto the city
+        // from a bounded height (a share of the whole trip flew the fleet far
+        // off the wrong way first when it launched from Mars's far side)
+        leaveDir: fleet.normal, arriveDir: cityUp,
+        leaveDist: fleet.radius * 4, arriveDist: Math.min(fromC.distanceTo(endC) * 0.15, f.R * 30),
+        avoid: [{ center: fleet.center, radius: fleet.radius }, { center: earthPos, radius: f.R }]
+    });
+    fleet.centreEnd0 = endC.clone();
+    fleet.centreEndNow = endC.clone();
+    fleet.ufos.forEach(u => { u.userData.offFrom = u.position.clone().sub(fromC); });
+    fleet.chasing = !!fleet.attack.camera;
+    if (fleet.chasing) {
+        fleet.attack.takeCamera?.();
+        fleet.ship = createShipCamera(fleet.attack.camera, fleet.attack.controls.target);
+        // Where the user was looking from, relative to the fleet: the chase
+        // eases in from there instead of snapping to its spot behind the fleet
+        fleet.startOffset = fleet.attack.camera.position.clone().sub(fromC);
+        fleet.startAim = fleet.attack.controls.target.clone();
+        // A steady frame for the whole trip: "behind" and "up" come from the
+        // overall Mars → Earth direction, not the curving path (following the
+        // path's heading swung the camera round the fleet and upside down)
+        fleet.tripDir = endC.clone().sub(fromC).normalize();
+        const camUp = fleet.attack.camera.up.clone();
+        fleet.tripUp = camUp.addScaledVector(fleet.tripDir, -camUp.dot(fleet.tripDir));
+        if (fleet.tripUp.lengthSq() < 1e-8) fleet.tripUp.set(0, 1, 0).addScaledVector(fleet.tripDir, -fleet.tripDir.y);
+        fleet.tripUp.normalize();
+        fleet.settleFrom = null;
+        // Drone heading: the fleet's direction of travel, allowed to swing
+        // round only gradually (it starts up off Mars, may loop back)
+        fleet.heading = pathTangent(fleet.path, 0, new THREE.Vector3());
+        fleet.prevCentre = fromC.clone();
+    }
+}
+
+function fleetPathPoint(f, earth, e, out) {
+    earth.localToWorld(cityPoint(f, 0, 0, HOLD_ALT_KM, fleet.centreEndNow));
+    pathPoint(fleet.path, e, out);
+    return out.add(_v.copy(fleet.centreEndNow).sub(fleet.centreEnd0).multiplyScalar(e));
+}
+
+// Ship camera behind and a little above the fleet along its heading; over the
+// last stretch it settles into the view straight down on the city, north up
+const _sub = new THREE.Vector3(), _tan = new THREE.Vector3(), _off = new THREE.Vector3(),
+    _aim = new THREE.Vector3(), _earthC = new THREE.Vector3(), _north = new THREE.Vector3();
+function chaseCamera(f, earth, k, dt) {
+    const { camera, controls } = fleet.attack;
+    _sub.set(0, 0, 0);
+    fleet.ufos.forEach(u => _sub.add(u.position));
+    _sub.divideScalar(fleet.ufos.length);
+    const size = fleet.ufos[0].scale.x;
+    // Chase like a drone: aim at the fleet, trailing behind its direction of
+    // travel; that direction swings round at most 50°/s, so when the fleet
+    // curves or loops back the camera glides round it instead of losing it
+    const vel = _tan.copy(_sub).sub(fleet.prevCentre);
+    fleet.prevCentre.copy(_sub);
+    if (vel.lengthSq() > 1e-30) turnToward(fleet.heading, vel.normalize(), THREE.MathUtils.degToRad(35) * dt);
+    // Trail mostly level (vertical part flattened): when the fleet climbs
+    // steeply, sitting right under it meant looking straight up, where the
+    // horizon spins as you pass the vertical
+    const trail = _north.copy(fleet.heading);
+    trail.y *= 0.35;
+    if (trail.lengthSq() < 1e-8) trail.copy(fleet.heading);
+    trail.normalize();
+    _off.copy(trail).multiplyScalar(-size * 16).addScaledVector(_v.set(0, 1, 0), size * 5);
+    _aim.copy(_sub).addScaledVector(fleet.heading, size * 3);
+    // Join from the user's own view, swinging round the fleet like a turntable
+    // (round the side, never through it or over the top)
+    const join = THREE.MathUtils.smoothstep(k, 0, 0.3);
+    if (join < 1) {
+        orbitBlend(fleet.startOffset, _off.clone(), join, _w.set(0, 1, 0), _off);
+        _aim.lerpVectors(fleet.startAim, _aim, join);
+    }
+    earth.getWorldPosition(_earthC);
+    const cityN = _v.copy(f.n).applyQuaternion(_q);
+    _north.set(0, 1, 0).applyQuaternion(_q);
+    // Arrive: swing round Earth's centre from wherever the chase has the camera
+    // to straight above the city, descending gradually (never across Earth)
+    const settle = THREE.MathUtils.smoothstep(k, 0.7, 1);
+    if (settle > 0) {
+        if (!fleet.settleFrom) fleet.settleFrom = camera.position.clone().sub(_earthC);
+        const finalRel = _w.copy(cityN).multiplyScalar(f.R + CITY_VIEW_KM * f.km);
+        const arcPos = swingVec(fleet.settleFrom, finalRel, settle).add(_earthC);
+        _off.lerp(arcPos.sub(_sub), Math.min(settle * 4, 1)); // hand the path over to the arc quickly
+        // Keep watching the fleet as it drops onto the city; only at the very
+        // end look straight down (the fleet is between the camera and the
+        // ground by then, so it stays in view)
+        _aim.lerp(_earthC, settle * settle * settle);
+    }
+    steerShipCamera(fleet.ship, camera, controls, {
+        subject: _sub, desiredOffset: _off, aimAt: _aim,
+        // Horizon level with the scene's up (ecliptic north) while chasing, so
+        // long swings can't leave the view upside down; the city's north at
+        // the end (looking straight down on it)
+        levelUp: settle > 0.5 ? _north : _w.set(0, 1, 0), maxRollDeg: 60,
+        bodies: [
+            { center: fleet.center, radius: fleet.radius * 1.12 },
+            { center: _earthC, radius: f.R * (1 + 20 / 6371) }
+        ],
+        // Tight springs while arcing in, so the camera stays on the arc
+        // The aim is smooth relative to the fleet already, so while simply
+        // tracking it the view may turn faster; easing in from the user's view
+        // and settling over the city keep the gentle 70°/s
+        dt, offsetTime: 0.6 - 0.48 * settle, aimTime: 0.5 - 0.35 * settle,
+        // (ramped: switching straight to the faster limit at the end of the
+        // ease-in spent the built-up lag in one quick swing)
+        maxTurnDeg: 60 + 60 * THREE.MathUtils.smoothstep(k, 0.25, 0.5) * (1 - settle)
+    });
+}
+
 export function updateUfos() {
     if (!fleet) return;
     const now = performance.now();
@@ -235,13 +323,10 @@ export function updateUfos() {
     const f = earth ? cityFrame(attack) : null;
     const tTravel = RISE_S + HOVER_S, tAttack = tTravel + TRAVEL_S, tLeave = tAttack + ATTACK_S, tEnd = tLeave + LEAVE_S;
 
-    if (f && t >= tTravel && !fleet.tripStarted) {
-        fleet.tripStarted = true;
-        fleet.chasing = !!attack.camera;
-        if (fleet.chasing) attack.takeCamera?.();
-        fleet.ufos.forEach(u => { u.userData.travelFrom = u.position.clone(); });
-    }
     if (earth) { earth.updateWorldMatrix(true, false); earth.getWorldQuaternion(_q); }
+    const dt = Math.min((now - fleet.lastNow) / 1000, 0.1);
+    fleet.lastNow = now;
+    if (f && t >= tTravel && !fleet.tripStarted) startTravel(f, earth);
 
     for (const ufo of fleet.ufos) {
         const u = ufo.userData;
@@ -253,13 +338,15 @@ export function updateUfos() {
             ufo.position.copy(u.home).addScaledVector(fleet.normal, fleet.radius * (0.16 * eased + 0.006 * Math.sin(lt * 18 + u.phase)));
             ufo.rotateY(0.25);
         } else if (t < tAttack) {
-            // Streak to the city, shrinking to the attack scale on the way
-            const k = (t - tTravel) / TRAVEL_S;
-            const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+            // Along the fleet's curved path (off Mars, round anything in the
+            // way, down onto the city), keeping formation, shrinking to the
+            // attack scale on the way, tipping from Mars-flat to city-flat
+            const e = travelEase((t - tTravel) / TRAVEL_S);
             const end = earth.localToWorld(cityPoint(f, Math.cos(u.orbit0) * u.orbitKm, Math.sin(u.orbit0) * u.orbitKm, u.altKm, _w));
-            ufo.position.lerpVectors(u.travelFrom, end, e);
+            fleetPathPoint(f, earth, e, ufo.position);
+            ufo.position.addScaledVector(u.offFrom, 1 - e).add(_v.copy(end).sub(fleet.centreEndNow).multiplyScalar(e));
             ufo.scale.setScalar(fleet.sizeMars * Math.pow(UFO_KM * f.km / fleet.sizeMars, e));
-            ufo.quaternion.setFromUnitVectors(UP, _v.copy(f.n).applyQuaternion(_q));
+            ufo.quaternion.setFromUnitVectors(UP, _v.copy(fleet.normal).lerp(_w.copy(f.n).applyQuaternion(_q), e).normalize());
             ufo.rotateY(lt * 6);
         } else if (t < tLeave) {
             // Circle over the city and open fire
@@ -288,8 +375,18 @@ export function updateUfos() {
     // straight down on the city (where the trip home would end), then hands over
     if (fleet.chasing && f && t >= tTravel) {
         if (attack.userBusy?.()) fleet.chasing = false; // the user grabbed the camera
-        else if (t < tAttack) chaseCamera(f, earth, (t - tTravel) / TRAVEL_S);
-        else { fleet.chasing = false; attack.onArrive?.(); }
+        else if (t < tAttack) chaseCamera(f, earth, (t - tTravel) / TRAVEL_S, dt);
+        else {
+            // Hold the city view (still rate-limited) until the camera has
+            // actually come round to it, then hand over: handing over while
+            // it was still turning made the Earth camera snap the rest
+            chaseCamera(f, earth, 1, dt);
+            const ship = fleet.ship;
+            const toEarth = earth.getWorldPosition(_v).sub(attack.camera.position).normalize();
+            const northUp = _w.set(0, 1, 0).applyQuaternion(_q);
+            const settled = ship.fwd.angleTo(toEarth) < 0.04 && ship.up.angleTo(northUp.addScaledVector(ship.fwd, -northUp.dot(ship.fwd)).normalize()) < 0.18;
+            if (settled || t > tAttack + 3) { fleet.chasing = false; attack.onArrive?.(); }
+        }
     }
 
     // Lasers, rockets, blasts

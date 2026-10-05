@@ -1,20 +1,20 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=272';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=272';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=287';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=287';
 import * as THREE from 'three';
-import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=272';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=272';
-import { initCheeseMoon } from './cheeseMoon.js?v=272';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=272';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=272';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=272';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=272';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=272';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=272';
+import { initISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=287';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=287';
+import { initCheeseMoon } from './cheeseMoon.js?v=287';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=287';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=287';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=287';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=287';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=287';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=287';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=272';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=272';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT } from './celestialData.js?v=287';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=287';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -4335,7 +4335,7 @@ function checkMarsUfos(R) {
             },
             userBusy: () => mouseButtonsHeld !== 0,
             // Arrived over the city: settle in with the Earth close-up camera
-            onArrive: () => flyToEarthSpot(homeCityDirLocal(), 500, HOME_TRIP.cityAltKm)
+            onArrive: () => flyToEarthSpot(homeCityDirLocal(), 1500, HOME_TRIP.cityAltKm)
         });
     }
 }
