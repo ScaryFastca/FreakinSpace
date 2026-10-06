@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>FreakinSpace - Interactive 3D Universe Explorer</title>
-    <link rel="stylesheet" href="css/styles.css?v=48">
+    <link rel="stylesheet" href="css/styles.css?v=49">
     <script type="importmap">
     {
         "imports": {
@@ -50,6 +50,11 @@
                 </div>
             </div>
             <div id="zoom-level">Earth-Moon System</div>
+            <!-- Size Comparison camera: 1 glides along the lineup, 2 flies object to object -->
+            <div id="compare-modes" hidden>
+                <button type="button" data-mode="1" title="Glide along the lineup: scroll pulls the next object forward">Mode 1</button>
+                <button type="button" data-mode="2" title="Fly from object to object, side on">Mode 2</button>
+            </div>
         </div>
         
         <div id="controls-info">
@@ -375,6 +380,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=307"></script>
+    <script type="module" src="js/main.js?v=331"></script>
 </body>
 </html>

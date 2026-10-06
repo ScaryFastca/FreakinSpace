@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=307';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=307';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=331';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=331';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=307';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=307';
-import { initCheeseMoon } from './cheeseMoon.js?v=307';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=307';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=307';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=307';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=307';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=307';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=307';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=307';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=331';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=331';
+import { initCheeseMoon } from './cheeseMoon.js?v=331';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=331';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=331';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=331';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=331';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=331';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=331';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=331';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=307';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=307';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=331';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=331';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1609,7 +1609,7 @@ function init() {
     galaxies = createGalaxies(scene);
 
     // Console debugging handle (harmless in production)
-    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, focusOnBody, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get focused() { return currentFocusedBody; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
+    window.__DEBUG = { scene, camera, renderer, controls, celestialBodies, focusOnBody, moonShadows, get iss() { return issState; }, satelliteCounts, computeScaleLayout, computeRawScaleLayout, getStarLayoutInfo, get currentSystemEdge() { return currentSystemEdge; }, get focused() { return currentFocusedBody; }, get compareObjects() { return sizeComparisonObjects; }, get glide() { return compareGlide; }, get flyTo() { return flyToAnimation; }, get cheeseMoon() { return cheeseMoon; }, cheeseTour, startCheese: () => { cheeseMoon.trigger(simDate); startCheeseTour(); } };
 
     // Spacetime grid removed
 
@@ -4170,6 +4170,7 @@ function animate() {
     controls.zoomToCursor = viewMode === 'map' && celestialBodies.get(currentFocusedBody)?.type === 'satellite';
     prepareEarthSurfaceCamera();
     if (!customOrbitDrag?.moved) controls.update();
+    updateCompareGlide();
     finishEarthSurfaceCamera();
     if (satPan.valid && satPan.body === currentFocusedBody && !tourGlide) {
         addSatPanDelta(celestialBodies.get(currentFocusedBody), _satPanDelta.copy(controls.target).sub(satPan.setTarget));
@@ -5259,6 +5260,7 @@ function stepSizeComparison(direction) {
 
     // If mid-animation, step from the current destination (bodyName), not
     // currentFocusedBody, so the next target is always one step further.
+    if (compareMode === 1 && !compareFree && compareGlide.active) { stepGlide(direction); return; }
     const baseName = flyToAnimation ? flyToAnimation.bodyName : (currentFocusedBody || compareLastName);
     let currentIndex = sizeComparisonCatalog.findIndex(item => item.name === baseName);
     if (currentIndex === -1) currentIndex = 0;
@@ -5272,6 +5274,12 @@ function stepSizeComparison(direction) {
 }
 
 function onWheel(event) {
+    if (viewMode === 'sizeCompare' && !compareFree && compareMode === 1 && compareGlide.active) {
+        if (event.target.closest?.('#ui-container')) return;
+        event.preventDefault();
+        scrollGlide(event.deltaY);
+        return;
+    }
     if (viewMode === 'sizeCompare' && !compareFree) {
         event.preventDefault();
         stepSizeComparison(event.deltaY > 0 ? 1 : -1);
@@ -5305,7 +5313,9 @@ function updateZoomLevel() {
             
             const isStarType = ['star', 'blackhole', 'neutronstar', 'galaxy', 'nebula', 'cluster'].includes(body.type);
             
-            if (showBigStars && isStarType) {
+            // (galaxies always: few, huge, and their particle clouds follow
+            // this; hidden, they vanished as you clicked around)
+            if ((showBigStars && isStarType) || body.type === 'galaxy') {
                 body.mesh.visible = true;
                 
                 // Ensure parent system is visible if applicable
@@ -6274,6 +6284,301 @@ function onMouseDown(event) {
 
 // Panning lets go of the followed object, otherwise animate() ticks the
 // target straight back to it
+// ── Size Comparison, Mode 1: glide along the lineup ─────────────────────
+// The view is a position along the lineup (s = 2.4: 40% of the way from
+// object 2 to object 3). The camera's framing scales geometrically between
+// neighbours' sizes while its centre slides along, so scrolling pulls the
+// next object forward as the view zooms out, and it arrives the same size on
+// screen. The camera sits off to the left looking well to the right, down
+// the line at what's coming. Dragging turns that angle, and it's kept.
+// Mode 2 is the original: fly object to object, side on.
+const COMPARE_MODE_KEY = 'sizeCompareMode:v1';
+let compareMode = (() => { try { return localStorage.getItem(COMPARE_MODE_KEY) === '2' ? 2 : 1; } catch { return 1; } })();
+// Down the line: from the left and a little above, looking 55° right, so
+// the lineup runs from lower left (passed, small) to upper right (coming).
+// The camera backs out as needed to keep the first object on screen
+const GLIDE_YAW = 55, GLIDE_PITCH = 12;   // degrees
+const glideDefaultDir = () => new THREE.Vector3(
+    Math.sin(THREE.MathUtils.degToRad(GLIDE_YAW)) * Math.cos(THREE.MathUtils.degToRad(GLIDE_PITCH)),
+    -Math.sin(THREE.MathUtils.degToRad(GLIDE_PITCH)),
+    -Math.cos(THREE.MathUtils.degToRad(GLIDE_YAW)) * Math.cos(THREE.MathUtils.degToRad(GLIDE_PITCH))).normalize();
+const GLIDE_DIST = 4.2;        // camera distance, in frame radii
+const GLIDE_AHEAD = 1.2;       // looks this many frame radii further along (the object sits left of centre)
+const GLIDE_SMOOTH = 0;        // zoom smoothing across neighbours (objects); 0: each object framed by its own size
+const GLIDE_PACE = 2.5;        // a step to an object more than this × bigger takes proportionally more scrolling
+const BH_FRAME = 4;            // black holes framed by shadow and inner disk (Rs), not the whole disk
+const BH_CLEAR = 7;            // keep the camera this far from a black hole (Rs): closer, the shadow fills the view
+const GLIDE_EASE_S = 0.35;     // how quickly the view catches up with the scroll
+const GLIDE_PER_NOTCH = 0.5;   // objects per mouse-wheel notch
+const GLIDE_BLEND_S = 1.2;     // easing back in after the camera was free
+const compareGlide = {
+    active: false, s: 0, sTarget: 0, lastR: 0, lastTime: 0, shownName: null,
+    viewDir: glideDefaultDir(), blend: null, snap: true,
+    hidden: new Set()   // objects passed and hidden (see updateCompareGlide)
+};
+const _gC = new THREE.Vector3(), _gC2 = new THREE.Vector3(), _gT = new THREE.Vector3(), _gP = new THREE.Vector3(),
+    _gA = new THREE.Vector3(), _gB = new THREE.Vector3(), _gQ = new THREE.Quaternion(),
+    _gE = new THREE.Vector3(), _gF = new THREE.Vector3(), _gG = new THREE.Vector3(), _gH = new THREE.Vector3(),
+    _gI = new THREE.Vector3(), _gJ = new THREE.Vector3(), _gK = new THREE.Vector3(), _gL = new THREE.Vector3(),
+    _gM = new THREE.Vector3(), _gDir = new THREE.Vector3(), _gN = new THREE.Vector3();
+
+function compareLineup() {
+    return sizeComparisonCatalog.filter(item => sizeComparisonObjects.get(item.name)?.mesh);
+}
+// Frame size for an object: as drawn in the lineup (black holes with their
+// disk), with a floor so the smallest ones' 2-unit gaps don't leave the view
+// empty between them
+function glideFrameRadius(item) {
+    const r = (item.radius || 2000) / 2000;
+    return Math.max(item.type === 'blackhole' ? r * BH_FRAME : r, 1.2);
+}
+// Frame radii for the whole lineup, smoothed in log scale so a sudden big
+// jump (a supergiant to a supermassive black hole: ×100) is shared out over
+// the objects before and after it instead of one lurch. Cached per lineup
+let glideRadiiCache = { lineup: null, radii: [] };
+function glideRadii(lineup) {
+    if (glideRadiiCache.lineup === lineup.length) return glideRadiiCache.radii;
+    const logs = lineup.map(item => Math.log(glideFrameRadius(item)));
+    if (!(GLIDE_SMOOTH > 0)) {
+        glideRadiiCache = { lineup: lineup.length, radii: logs.map(Math.exp) };
+        return glideRadiiCache.radii;
+    }
+    const span = Math.ceil(GLIDE_SMOOTH * 3);
+    const radii = logs.map((_, i) => {
+        let sum = 0, wsum = 0;
+        for (let k = -span; k <= span; k++) {
+            const j = THREE.MathUtils.clamp(i + k, 0, logs.length - 1);
+            const w = Math.exp(-(k * k) / (2 * GLIDE_SMOOTH * GLIDE_SMOOTH));
+            sum += logs[j] * w; wsum += w;
+        }
+        return Math.exp(sum / wsum);
+    });
+    glideRadiiCache = { lineup: lineup.length, radii };
+    return radii;
+}
+function glideIndexOf(name) {
+    return compareLineup().findIndex(item => item.name === name);
+}
+// Glide to an object (clicks, the list, the arrows)
+function glideTo(name) {
+    const i = glideIndexOf(name);
+    if (i < 0) return false;
+    if (!compareGlide.active) startGlide(i);
+    compareGlide.sTarget = i;
+    return true;
+}
+function startGlide(i) {
+    const g = compareGlide;
+    g.active = true;
+    flyToAnimation = null;
+    g.s = g.sTarget = i;
+    g.lastTime = performance.now();
+    g.shownName = null;
+    // Coming from the map: snap. Otherwise (Mode 2, or a free camera) ease in
+    g.blend = g.snap ? null : { t0: performance.now(), pos: camera.position.clone(), target: controls.target.clone() };
+    g.snap = false;
+    g.lastR = 0;
+    g.lastSet = null;
+}
+function stopGlide() {
+    compareGlide.active = false;
+    showPassedObjects();
+}
+function showPassedObjects() {
+    for (const name of compareGlide.hidden) {
+        const m = sizeComparisonObjects.get(name)?.mesh;
+        if (m) m.visible = true;
+    }
+    compareGlide.hidden.clear();
+}
+function stepGlide(direction) {
+    const n = compareLineup().length;
+    compareGlide.sTarget = THREE.MathUtils.clamp(Math.round(compareGlide.sTarget) + direction, 0, n - 1);
+}
+function scrollGlide(deltaY) {
+    const lineup = compareLineup();
+    const n = lineup.length;
+    const radii = glideRadii(lineup);
+    // Through a big jump in size (a supergiant to M87*, ×50) each notch goes
+    // proportionally less far, so the zoom-out is spread over many notches
+    const dir = Math.sign(deltaY);
+    const at = compareGlide.sTarget;
+    const seg = THREE.MathUtils.clamp(dir > 0 ? Math.floor(at + 1e-6) : Math.ceil(at - 1e-6) - 1, 0, n - 2);
+    const ratio = radii[seg + 1] / radii[seg];
+    const slow = Math.max(1, Math.log(ratio) / Math.log(GLIDE_PACE));
+    const step = THREE.MathUtils.clamp(deltaY / 100, -1, 1) * GLIDE_PER_NOTCH / slow;
+    compareGlide.sTarget = THREE.MathUtils.clamp(at + step, 0, n - 1);
+}
+
+// Where a point lands across the screen (NDC x) for a camera at T − dir·D
+// looking along dir; −Infinity when it's behind the camera (off to the left)
+function glideNdcX(point, target, dir, D) {
+    const cam = _gF.copy(target).addScaledVector(dir, -D);
+    const v = _gG.copy(point).sub(cam);
+    const depth = v.dot(dir);
+    if (depth <= 0) return -Infinity;
+    const right = _gH.crossVectors(dir, _yAxis).normalize();
+    const aspect = window.innerWidth / window.innerHeight;
+    const tanH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * aspect;
+    return v.dot(right) / (depth * tanH);
+}
+
+// The camera distance: at least D0, and far enough back that `anchor` (the
+// first, smallest object in the lineup) is on screen right of the side
+// panel. Only backs out (the view stays on the object), so everything passed
+// gathers at the left edge. The smallest such distance, found by bisection,
+// so it moves smoothly with the scroll
+function fitAnchor(anchor, dir, D0) {
+    const sidebar = document.getElementById('sidebar');
+    const sideW = sidebar && window.innerWidth > 768 && !sidebar.classList.contains('collapsed') ? sidebar.offsetWidth : 0;
+    const left = -1 + 2 * (sideW + 60) / window.innerWidth;
+    const fits = D => { const x = glideNdcX(anchor, _gT, dir, D); return Number.isFinite(x) && x >= left; };
+    if (fits(D0)) return D0;
+    let lo = D0, hi = D0 * 2;
+    for (let it = 0; it < 60 && !fits(hi); it++) { lo = hi; hi *= 2; }
+    for (let it = 0; it < 30; it++) {
+        const mid = Math.sqrt(lo * hi);
+        if (fits(mid)) hi = mid; else lo = mid;
+    }
+    return hi;
+}
+
+// Per frame, after controls.update() (so a drag's turn is read back first)
+function updateCompareGlide() {
+    const g = compareGlide;
+    if (!g.active || viewMode !== 'sizeCompare' || compareFree || compareMode !== 1) return;
+    const lineup = compareLineup();
+    if (!lineup.length) return;
+    const now = performance.now();
+    const dt = Math.min((now - g.lastTime) / 1000, 0.1);
+    g.lastTime = now;
+    // Keep any turn the user dragged in (OrbitControls moved the camera
+    // round the target since last frame)
+    // (only real turns: compared with where the glide put the camera, so
+    // its own nudges, like keeping clear of black holes, aren't learned)
+    if (g.lastR > 0 && !g.blend && g.lastSet) {
+        const before = _gA.copy(g.lastSet).sub(controls.target);
+        const after = _gB.copy(camera.position).sub(controls.target);
+        if (after.distanceTo(before) > 1e-6 * g.lastR && Number.isFinite(after.x + before.x)) {
+            _gQ.setFromUnitVectors(before.normalize(), after.normalize());
+            g.viewDir.applyQuaternion(_gQ).normalize();
+        }
+    }
+    if (!Number.isFinite(g.viewDir.x + g.viewDir.y + g.viewDir.z)) g.viewDir.copy(glideDefaultDir());
+    g.s += (g.sTarget - g.s) * (1 - Math.exp(-dt / GLIDE_EASE_S));
+    if (Math.abs(g.sTarget - g.s) < 1e-4) g.s = g.sTarget;
+    const i = Math.min(Math.floor(g.s), lineup.length - 1);
+    const j = Math.min(i + 1, lineup.length - 1);
+    const f = g.s - i;
+    const a = lineup[i], b = lineup[j];
+    sizeComparisonObjects.get(a.name).mesh.getWorldPosition(_gC);
+    sizeComparisonObjects.get(b.name).mesh.getWorldPosition(_gC2);
+    const radii = glideRadii(lineup);
+    const ra = radii[i], rb = radii[j];
+    // Size changes geometrically; the centre moves so each object sits in
+    // the same place on screen at its own stop
+    const R = ra * Math.pow(rb / ra, f);
+    // (either way: a black hole framed bigger than the star after it shrinks
+    // the frame, and clamping that difference to positive sent the view off
+    // to 10²⁰)
+    const dr = rb - ra;
+    const centre = _gC.lerp(_gC2, Math.abs(dr) > 1e-9 * ra ? (R - ra) / dr : f);
+    const dir = g.viewDir;
+    _gT.copy(centre).x += GLIDE_AHEAD * R;
+    let D = GLIDE_DIST * R;
+    // Keep the start of the lineup (and so home) on screen at the left
+    const first = sizeComparisonObjects.get(lineup[0].name)?.mesh;
+    if (first) D = fitAnchor(first.getWorldPosition(_gE), dir, D);
+    // A black hole the view is centred in: stay outside its ray-traced
+    // sphere (from inside, looking at the hole, every ray falls in: a black
+    // screen, and slow). Backs straight out along the view, eased in as the
+    // look-at point goes deeper into the sphere, so nothing jumps
+    // Only holes near this point of the lineup count (the biggest ones'
+    // spheres reach back over all the small objects), faded in by how near,
+    // so one coming into range doesn't make the view jump
+    for (let k = 0; k < lineup.length; k++) {
+        const near = THREE.MathUtils.smoothstep(3.5 - Math.abs(k - g.s), 0, 2.5);
+        if (near <= 0) continue;
+        if (lineup[k].type !== 'blackhole') continue;
+        const bh = sizeComparisonObjects.get(lineup[k].name).mesh.getWorldPosition(_gA);
+        const clear = (lineup[k].radius / 2000) * BH_CLEAR;
+        const w = _gB.copy(_gT).sub(bh);
+        const c2 = w.lengthSq() - clear * clear;
+        if (c2 >= 0) continue;
+        const b = w.dot(dir);
+        const need = b + Math.sqrt(b * b - c2);
+        const depth = THREE.MathUtils.smoothstep(-c2 / (clear * clear), 0, 0.3) * near;
+        D = THREE.MathUtils.lerp(D, Math.max(D, need), depth);
+    }
+    _gP.copy(_gT).addScaledVector(dir, -D);
+    // Objects already passed that the camera is now right next to (a black
+    // hole's disk is far wider than the stars around it in the lineup) would
+    // fill the view from beside it: hide them until the camera moves off
+    const passedUpTo = Math.round(g.s) - 1;
+    for (const name of g.hidden) {
+        const k = lineup.findIndex(item => item.name === name);
+        if (k < 0 || k > passedUpTo) { const m = sizeComparisonObjects.get(name)?.mesh; if (m) m.visible = true; g.hidden.delete(name); }
+    }
+    for (let k = Math.max(passedUpTo - 8, 0); k <= passedUpTo; k++) {
+        const item = lineup[k];
+        const mesh = sizeComparisonObjects.get(item.name)?.mesh;
+        if (!mesh) continue;
+        const reach = (item.radius / 2000) * (item.type === 'blackhole' ? BLACK_HOLE_REACH : 1.3);
+        const tooClose = _gP.distanceTo(mesh.getWorldPosition(_gA)) < reach * 1.6;
+        if (tooClose && mesh.visible) { mesh.visible = false; g.hidden.add(item.name); }
+        else if (!tooClose && g.hidden.has(item.name)) { mesh.visible = true; g.hidden.delete(item.name); }
+    }
+    if (g.blend) {
+        const k = Math.min((now - g.blend.t0) / 1000 / GLIDE_BLEND_S, 1);
+        const e = k * k * (3 - 2 * k);
+        _gP.lerpVectors(g.blend.pos, _gP, e);
+        _gT.lerpVectors(g.blend.target, _gT, e);
+        if (k >= 1) g.blend = null;
+    }
+    // (never apply a broken frame: one NaN here used to stick for good)
+    if (!Number.isFinite(_gP.x + _gP.y + _gP.z + _gT.x + _gT.y + _gT.z)) return;
+    controls.minDistance = 1e-6;
+    controls.maxDistance = Infinity;
+    controls.target.copy(_gT);
+    camera.position.copy(_gP);
+    camera.lookAt(_gT);
+    g.lastR = R;
+    (g.lastSet ??= new THREE.Vector3()).copy(_gP);
+    // The object at the nearest stop is the one "on": list highlight now,
+    // info panel and address once the glide settles there
+    const near = lineup[Math.round(g.s)];
+    if (near && currentFocusedBody !== near.name) {
+        currentFocusedBody = near.name;
+        updateSidebarSelection(near.name);
+    }
+    if (near && g.s === g.sTarget && g.shownName !== near.name) {
+        g.shownName = near.name;
+        const body = sizeComparisonObjects.get(near.name);
+        if (body) showBodyInfo(body.data);
+        const url = new URL(window.location);
+        url.searchParams.set('mode', 'sizeCompare');
+        url.searchParams.set('target', near.name);
+        window.history.replaceState({ mode: 'sizeCompare', target: near.name }, '', url);
+    }
+}
+
+function setCompareMode(mode) {
+    compareMode = mode === 2 ? 2 : 1;
+    try { localStorage.setItem(COMPARE_MODE_KEY, String(compareMode)); } catch { /* private mode */ }
+    document.querySelectorAll('#compare-modes button').forEach(b => b.classList.toggle('active', Number(b.dataset.mode) === compareMode));
+    if (viewMode !== 'sizeCompare') return;
+    const name = currentFocusedBody || compareLastName;
+    setCompareFree(false);
+    if (compareMode === 1) {
+        compareGlide.viewDir.copy(glideDefaultDir());
+        const i = glideIndexOf(name);
+        startGlide(Math.max(i, 0));
+    } else {
+        stopGlide();
+        if (name) focusOnSizeComparisonObject(name);
+    }
+}
+
 // Size Comparison normally holds the view on one object (scroll steps along
 // the lineup). Panning frees the camera: scroll and pinch zoom, orbit all
 // the way round. Picking an object (click, arrows, list) locks on again
@@ -6287,6 +6592,8 @@ function setCompareFree(on) {
     controls.minPolarAngle = on ? 0 : Math.PI * 0.25;
     controls.maxPolarAngle = on ? Math.PI : Math.PI * 0.75;
     if (on) {
+        compareGlide.active = false;
+        showPassedObjects();
         compareLastName = flyToAnimation?.bodyName || currentFocusedBody || compareLastName;
         flyToAnimation = null;
         currentFocusedBody = null;
@@ -8374,12 +8681,19 @@ function toggleViewMode(e, updateHistory = true, focusEarth = false) {
             if (iconSpan) iconSpan.textContent = '🗺️';
         }
         updateMobileCompareButton('🗺️', 'Map');
+        compareGlide.snap = true;
+        const modes = document.getElementById('compare-modes');
+        if (modes) modes.hidden = false;
+        document.querySelectorAll('#compare-modes button').forEach(b => b.classList.toggle('active', Number(b.dataset.mode) === compareMode));
         const arrows = document.getElementById('compare-arrows');
         if (arrows) arrows.classList.remove('hidden');
         
     } else {
         // Re-enable full OrbitControls for map view and remove polar clamp
         compareFree = false;
+        stopGlide();
+        const modes = document.getElementById('compare-modes');
+        if (modes) modes.hidden = true;
         controls.enableZoom = true;
         controls.enablePan = true;
         controls.enableRotate = true;
@@ -9990,6 +10304,7 @@ function focusOnSizeComparisonObject(name) {
     const body = sizeComparisonObjects.get(name);
     if (!body || !body.mesh) return;
     setCompareFree(false);
+    if (compareMode === 1 && glideTo(name)) return;
 
     const inheritedMotion = getSizeComparisonMotion(flyToAnimation);
     
@@ -10957,6 +11272,8 @@ function setupCompareTouchNav() {
     const canvas = renderer.domElement;
 
     document.getElementById('compare-prev').addEventListener('click', () => stepSizeComparison(-1));
+    document.querySelectorAll('#compare-modes button').forEach(b =>
+        b.addEventListener('click', () => setCompareMode(Number(b.dataset.mode))));
     document.getElementById('compare-next').addEventListener('click', () => stepSizeComparison(1));
 
     let pinchDist = null;

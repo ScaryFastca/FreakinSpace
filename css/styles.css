@@ -599,6 +599,27 @@ body {
     letter-spacing: 2px;
 }
 
+/* Size Comparison camera modes, under the view name */
+#compare-modes {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+    pointer-events: auto;
+}
+#compare-modes[hidden] { display: none; }
+#compare-modes button {
+    padding: 4px 12px;
+    background: rgba(0, 20, 40, 0.6);
+    border: 1px solid rgba(74, 158, 255, 0.4);
+    border-radius: 14px;
+    color: #88aaff;
+    font-size: 0.75rem;
+    letter-spacing: 1px;
+    cursor: pointer;
+}
+#compare-modes button:hover { border-color: rgba(74, 158, 255, 0.8); color: #cfe3ff; }
+#compare-modes button.active { background: rgba(74, 158, 255, 0.3); border-color: #4a9eff; color: #fff; }
+
 #controls-info {
     position: absolute;
     bottom: calc(30px + var(--settings-row-height, 40px)); /* clear of the settings row */

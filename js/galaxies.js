@@ -10,8 +10,8 @@
 // its true size seen from the Sun in every scale mode. Built the first time a
 // galaxy is big enough on screen to see.
 import * as THREE from 'three';
-import { raDecToAppFrame, LY } from './celestialData.js?v=307';
-import { FAN_GLSL_UNIFORMS, FAN_GLSL_FUNCTIONS, FAN_DEFINES, makeFanUniforms, newFanState, stepFan } from './milkyWay.js?v=307';
+import { raDecToAppFrame, LY } from './celestialData.js?v=331';
+import { FAN_GLSL_UNIFORMS, FAN_GLSL_FUNCTIONS, FAN_DEFINES, makeFanUniforms, newFanState, stepFan } from './milkyWay.js?v=331';
 
 // pa: position angle of the major axis on the sky (° east of north);
 // inc: tilt (0 face-on, 90 edge-on). Sizes are stellar-disk radii.
@@ -409,7 +409,9 @@ function galaxyBasis(cfg, lineOfSight) {
 // isn't showing
 function placement(item, bodies) {
     const body = bodies.get(item.cfg.body);
-    if (!body?.mesh?.visible || !body.data?.distance) return null;
+    // Always shown, even while the body itself is hidden (big stars off,
+    // a black hole away from the view): few, huge, and part of the sky
+    if (!body?.mesh || !body.data?.distance) return null;
     body.mesh.getWorldPosition(_pos);
     const distLy = body.data.distance / LY;
     const unitsPerLy = _pos.length() / distLy;

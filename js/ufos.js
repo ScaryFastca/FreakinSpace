@@ -3,7 +3,7 @@
 // the visitor's "You" spot with lasers and rockets, then leaves. The camera
 // rides home with them (main.js starts the trip home). Not in the README.
 import * as THREE from 'three';
-import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=307';
+import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=331';
 
 const FLEET = 6;
 const RISE_S = 0.7;       // lift off Mars
