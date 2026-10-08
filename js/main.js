@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=338';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=338';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=342';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=342';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=338';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=338';
-import { initCheeseMoon } from './cheeseMoon.js?v=338';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=338';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=338';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=338';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=338';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=338';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=338';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=338';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=342';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=342';
+import { initCheeseMoon } from './cheeseMoon.js?v=342';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=342';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=342';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=342';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=342';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=342';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=342';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=342';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=338';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=338';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=342';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=342';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -60,6 +60,32 @@ const HI_RES_TEXTURE_FILES = {
     'Earth': 'textures/8k_earth_daymap.jpg'
 };
 const EARTH_NIGHT_TEXTURE = 'textures/8k_earth_nightmap.jpg';
+
+// Heavy GPU uploads (the 8K Earth maps take ~200 ms each) wait until the
+// page has settled, ~7.5 s after the first frame, or sooner if Earth gets big
+// on screen, then go one at a time a second apart. Done up front, they froze
+// the first view for most of a second
+const heavyUploads = { queue: [], readyAt: 0, busy: false };
+function whenSettled(job) { heavyUploads.queue.push(job); }
+function pumpHeavyUploads() {
+    const h = heavyUploads;
+    if (!h.queue.length || h.busy) return;
+    const now = performance.now();
+    if (!h.readyAt) h.readyAt = now + 7500;   // (after the side tabs' opening sequence)
+    let nearEarth = false;
+    const earth = celestialBodies.get('Earth')?.mesh;
+    if (earth && viewMode === 'map') {
+        const R = earth.userData.visualRadius || 1;
+        const d = camera.position.distanceTo(earth.getWorldPosition(_magPos));
+        nearEarth = R * (window.innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(d, 1e-9) > 120;
+    }
+    if (now < h.readyAt && !nearEarth) return;
+    h.busy = true;
+    Promise.resolve().then(h.queue.shift()).catch(() => {}).finally(() => {
+        h.readyAt = performance.now() + 1000;
+        h.busy = false;
+    });
+}
 
 function canUseHiResTextures() {
     return !isMobileLayout() && (!renderer || renderer.capabilities.maxTextureSize >= 8192);
@@ -151,13 +177,15 @@ function loadRealTexture(name, material, makeFallbackTexture) {
         }
         // Upgrade in place: every material sharing this texture gets the 8K image
         if (HI_RES_TEXTURE_FILES[name] && canUseHiResTextures()) {
-            new THREE.ImageLoader().load(HI_RES_TEXTURE_FILES[name], img => {
+            whenSettled(() => new Promise(done => new THREE.ImageLoader().load(HI_RES_TEXTURE_FILES[name], img => {
                 // GPU storage was allocated (immutably) at 2K; free it so the next
                 // upload reallocates at 8K instead of overflowing with texSubImage
                 tex.dispose();
                 tex.image = img;
                 tex.needsUpdate = true;
-            });
+                renderer?.initTexture(tex);              // (the upload, now rather than mid-frame)
+                done();
+            }, undefined, done)));
         }
     }, undefined, () => {
         realTextureCache.delete(name);
@@ -198,11 +226,13 @@ let nightLightsScale = 1;      // city lights dimmed by the cheese-Moon disaster
 // cloned 8K texture is re-uploaded to the GPU, ~300 ms and ~350 MB each).
 function addEarthNightLights(material) {
     if (!canUseHiResTextures()) return;
-    earthNightTexture ??= new Promise(resolve => textureLoader.load(EARTH_NIGHT_TEXTURE, tex => {
+    earthNightTexture ??= new Promise(resolve => whenSettled(() => new Promise(done => textureLoader.load(EARTH_NIGHT_TEXTURE, tex => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.anisotropy = renderer ? renderer.capabilities.getMaxAnisotropy() : 4;
+        renderer?.initTexture(tex);
         resolve(tex);
-    }));
+        done();
+    }, undefined, done))));
     earthNightTexture.then(tex => {
         tileLighting.nightMap.value = tex;
         material.emissiveMap = tex;
@@ -1722,6 +1752,7 @@ function init() {
     document.getElementById('home-btn').addEventListener('click', () => flyToEarth());
 
     setupSidebarPeek();
+    setupSideTabs();
 
     const minimizeInfo = document.getElementById('minimize-info');
     if (minimizeInfo) {
@@ -1961,8 +1992,13 @@ function init() {
     // Initialize sidebar object list
     setTimeout(populateObjectList, 100);
 
-    // Start animation
-    animate();
+    // Start animation, once the shaders are compiled (in parallel where the
+    // browser can, instead of all at once inside the first frame); never
+    // waiting more than a couple of seconds
+    let started = false;
+    const start = () => { if (!started) { started = true; animate(); } };
+    renderer.compileAsync(scene, camera).catch(() => {}).finally(start);
+    setTimeout(start, 2000);
 
     // Update UI
     updateUI();
@@ -4231,6 +4267,7 @@ function animate() {
     updateUfos();
     document.getElementById('home-indicator')?.classList.toggle('under-attack', ufoAttackActive());
     updateHomeTrip();
+    pumpHeavyUploads();
     perfMark('UFOs, light, trip');
     renderMagnifier();
     perfMark('magnifier');
@@ -5927,6 +5964,119 @@ function scheduleSidebarTuck() {
         sidebar.classList.add('collapsed');
         sidebarPeek.state = 'closed';
     }, SIDEBAR_PEEK_MS);
+}
+
+// ── Side tabs (desktop) ──────────────────────────────────────────────────
+// Tabs down the left edge, each sliding out a panel: the object list split
+// by kind, and the controls. Pointing at a tab opens it until the pointer
+// leaves; clicking keeps it open (click again, or ×, to close). On load each
+// one slides open in turn, lingering on the controls. Phones keep #sidebar
+const SIDE_TAB_TITLES = { solar: 'Solar System', lineup: 'Size Lineup', stars: 'Stars', planets: 'Planets',
+    blackholes: 'Black Holes', galaxies: 'Galaxies', controls: 'Controls' };
+const CATEGORY_TAB = { 'Solar System': 'solar', 'Small Bodies': 'solar', 'Stars': 'stars', 'Exoplanets': 'planets',
+    'Black Holes': 'blackholes', 'Galaxies': 'galaxies', 'Size Comparison': 'lineup' };
+const SIDE_INTRO = { delay: 900, step: 550, controls: 3200 };
+const sideTabs = { open: null, pinned: false, timer: null, introTimers: [] };
+
+// Move the list's categories (just rendered into #object-list) into their tabs
+function distributeSideTabs() {
+    if (isMobileLayout()) return;
+    const list = document.getElementById('object-list');
+    if (!list) return;
+    document.querySelectorAll('#side-panel .side-pane').forEach(pane => {
+        if (pane.dataset.tab !== 'controls') pane.replaceChildren();
+    });
+    list.querySelectorAll(':scope > .object-category').forEach(cat => {
+        const name = (cat.querySelector('.category-title, .category-name')?.textContent || '').trim();
+        const pane = document.querySelector(`#side-panel .side-pane[data-tab="${CATEGORY_TAB[name]}"]`);
+        if (pane) pane.appendChild(cat);
+    });
+    // Tabs with nothing in them (the lineup outside Size Comparison) hide
+    document.querySelectorAll('#side-tabs .side-tab').forEach(tab => {
+        if (tab.dataset.tab === 'controls') return;
+        tab.hidden = !document.querySelector(`#side-panel .side-pane[data-tab="${tab.dataset.tab}"]`)?.children.length;
+    });
+    if (sideTabs.open && document.querySelector(`#side-tabs .side-tab[data-tab="${sideTabs.open}"]`)?.hidden) closeSidePanel();
+}
+
+function openSidePanel(tab, pin) {
+    clearTimeout(sideTabs.timer);
+    const panel = document.getElementById('side-panel');
+    sideTabs.open = tab;
+    sideTabs.pinned = pin;
+    panel.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.dataset.tab === tab));
+    document.querySelectorAll('#side-tabs .side-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+    panel.querySelector('.side-panel-title').textContent = SIDE_TAB_TITLES[tab] || '';
+    panel.classList.toggle('wide', tab === 'controls');
+    panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+}
+
+function closeSidePanel() {
+    clearTimeout(sideTabs.timer);
+    const panel = document.getElementById('side-panel');
+    panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    document.querySelectorAll('#side-tabs .side-tab').forEach(b => b.classList.remove('active'));
+    sideTabs.open = null;
+    sideTabs.pinned = false;
+}
+
+function stopSideIntro() {
+    sideTabs.introTimers.forEach(clearTimeout);
+    sideTabs.introTimers = [];
+}
+
+function setupSideTabs() {
+    const rail = document.getElementById('side-tabs');
+    const panel = document.getElementById('side-panel');
+    if (!rail || !panel) return;
+    // Opened by pointing: tuck away a moment after the pointer leaves both
+    const tuckSoon = () => {
+        if (sideTabs.pinned || !sideTabs.open) return;
+        clearTimeout(sideTabs.timer);
+        sideTabs.timer = setTimeout(closeSidePanel, 350);
+    };
+    const keep = () => clearTimeout(sideTabs.timer);
+    rail.querySelectorAll('.side-tab').forEach(tab => {
+        tab.addEventListener('pointerenter', e => {
+            if (e.pointerType !== 'mouse') return;
+            stopSideIntro();
+            if (!sideTabs.pinned) openSidePanel(tab.dataset.tab, false);
+            else keep();
+        });
+        tab.addEventListener('click', () => {
+            stopSideIntro();
+            if (sideTabs.pinned && sideTabs.open === tab.dataset.tab) closeSidePanel();
+            else openSidePanel(tab.dataset.tab, true);
+        });
+    });
+    for (const el of [rail, panel]) {
+        el.addEventListener('pointerenter', e => { if (e.pointerType === 'mouse') keep(); });
+        el.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') tuckSoon(); });
+    }
+    panel.querySelector('.side-panel-close').addEventListener('click', () => { stopSideIntro(); closeSidePanel(); });
+    // Crossing the phone/desktop size: the list moves between #sidebar and the tabs
+    let wasMobile = isMobileLayout();
+    const relayout = () => {
+        if (isMobileLayout() === wasMobile) return;
+        wasMobile = isMobileLayout();
+        closeSidePanel();
+        populateObjectList();
+    };
+    MOBILE_LAYOUT_MQ.addEventListener('change', relayout);
+    window.addEventListener('resize', relayout);
+
+    // The opening sequence: each tab in turn, top to bottom, then the controls
+    if (isMobileLayout()) return;
+    let at = SIDE_INTRO.delay;
+    const tabs = [...rail.querySelectorAll('.side-tab')].filter(t => !t.hidden);
+    tabs.forEach(tab => {
+        const id = tab.dataset.tab;
+        sideTabs.introTimers.push(setTimeout(() => openSidePanel(id, false), at));
+        at += id === 'controls' ? SIDE_INTRO.controls : SIDE_INTRO.step;
+    });
+    sideTabs.introTimers.push(setTimeout(() => { if (!sideTabs.pinned) closeSidePanel(); sideTabs.introTimers = []; }, at));
 }
 
 function setupSidebarPeek() {
@@ -10543,6 +10693,7 @@ function populateObjectList() {
     // Handle size comparison view
     if (viewMode === 'sizeCompare') {
         populateSizeComparisonList(listContainer);
+        distributeSideTabs();
         return;
     }
 
@@ -10745,6 +10896,7 @@ function populateObjectList() {
     });
     
     listContainer.innerHTML = html;
+    distributeSideTabs();
 }
 
  let hoverPanTimer = null;
@@ -11108,6 +11260,10 @@ function setupControlsInfo() {
     const panel = document.getElementById('controls-info');
     const showButton = document.getElementById('controls-info-button');
     if (!panel || !showButton || isMobileLayout()) return;
+    // Desktop: the key list lives in the side tabs' Controls panel now
+    const cols = panel.querySelector('.controls-cols');
+    const pane = document.querySelector('.side-pane[data-tab="controls"]');
+    if (cols && pane) { pane.appendChild(cols); return; }
 
     let minimizeTimer = null;
 

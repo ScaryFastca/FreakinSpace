@@ -8,7 +8,7 @@
     <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
-    <link rel="stylesheet" href="css/styles.css?v=49">
+    <link rel="stylesheet" href="css/styles.css?v=51">
     <script type="importmap">
     {
         "imports": {
@@ -33,7 +33,36 @@
             </div>
             <div id="object-list"></div>
         </div>
-        
+
+        <!-- Desktop: tabs down the left edge, each sliding out a panel (the
+             object list's categories are moved in by main.js; phones keep
+             #sidebar as a sheet) -->
+        <nav id="side-tabs" aria-label="Objects and controls">
+            <button type="button" class="side-tab" data-tab="solar">Solar System</button>
+            <button type="button" class="side-tab" data-tab="lineup" hidden>Size Lineup</button>
+            <button type="button" class="side-tab" data-tab="stars">Stars</button>
+            <button type="button" class="side-tab" data-tab="planets">Planets</button>
+            <button type="button" class="side-tab" data-tab="blackholes">Black Holes</button>
+            <button type="button" class="side-tab" data-tab="galaxies">Galaxies</button>
+            <div class="side-tab-gap"></div>
+            <button type="button" class="side-tab" data-tab="controls">Controls</button>
+        </nav>
+        <aside id="side-panel" aria-hidden="true">
+            <div class="side-panel-head">
+                <span class="side-panel-title"></span>
+                <button type="button" class="side-panel-close" aria-label="Close" title="Close">×</button>
+            </div>
+            <div class="side-panel-body">
+                <div class="side-pane" data-tab="solar"></div>
+                <div class="side-pane" data-tab="lineup"></div>
+                <div class="side-pane" data-tab="stars"></div>
+                <div class="side-pane" data-tab="planets"></div>
+                <div class="side-pane" data-tab="blackholes"></div>
+                <div class="side-pane" data-tab="galaxies"></div>
+                <div class="side-pane" data-tab="controls"></div>
+            </div>
+        </aside>
+
         <div id="header">
             <div class="header-row">
                 <h1>FreakinSpace</h1>
@@ -387,6 +416,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=338"></script>
+    <script type="module" src="js/main.js?v=342"></script>
 </body>
 </html>
