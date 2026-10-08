@@ -5,6 +5,10 @@ import * as THREE from 'three';
 
 const SATELLITE_JS_URL = 'https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/+esm';
 const CELESTRAK = 'https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&GROUP=';
+// The FreakinSpace API (worker/): keeps one copy of each group, refreshed on
+// a schedule, so visitors don't each count against CelesTrak's limit (one
+// download per group per 2 h per network). Empty: straight to CelesTrak
+const SPACE_API = 'https://freakinspace-api.freakinspace.workers.dev';
 // CelesTrak updates every ~2 h and asks clients not to re-download more often
 const CACHE_TTL_MS = 2 * 3600 * 1000;
 // A saved copy younger than this is used straight away (refreshed in the
@@ -56,10 +60,25 @@ function reportProblem(label, message) {
 }
 
 async function downloadTle(key, cacheKey) {
+    // Our own copy first; CelesTrak itself if the API isn't there or fails
+    // (if the API answers that it hasn't got the group, that's final: it's
+    // CelesTrak that's failing, and asking it from here only adds a long
+    // wait; CelesTrak only if the API itself can't be reached)
+    if (SPACE_API) {
+        try { return await fetchTleFrom(`${SPACE_API}/tle/${key}`, cacheKey); }
+        catch (err) {
+            if (/^HTTP /.test(err.message)) throw err;
+            console.warn(`Satellite API: ${key} (${err.message}); trying CelesTrak`);
+        }
+    }
+    return fetchTleFrom(CELESTRAK + key, cacheKey);
+}
+
+async function fetchTleFrom(url, cacheKey) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
     try {
-        const res = await fetch(CELESTRAK + key, { signal: ctrl.signal });
+        const res = await fetch(url, { signal: ctrl.signal });
         // 403 = CelesTrak's limit: same group fetched <2 h ago from this IP
         // (e.g. a second browser on the same network)
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -173,6 +192,12 @@ export function satellitesLoading() {
 }
 
 // The standard groups downloaded and positioned once (failed ones don't count)
+// At least one group downloaded and positioned (the intro needn't wait for
+// a slow or missing one)
+export function satellitesAnyReady() {
+    return [...groups.values()].some(g => g.points && g.fullPass);
+}
+
 export function satellitesReady() {
     return GROUPS.filter(cfg => !cfg.optional).every(cfg => {
         const g = groups.get(cfg.key);

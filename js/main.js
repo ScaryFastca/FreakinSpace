@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=334';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=334';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=337';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=337';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=334';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=334';
-import { initCheeseMoon } from './cheeseMoon.js?v=334';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=334';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=334';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=334';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=334';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=334';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=334';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=334';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=337';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=337';
+import { initCheeseMoon } from './cheeseMoon.js?v=337';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=337';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=337';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=337';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=337';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=337';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=337';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=337';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=334';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=334';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=337';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=337';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -4240,7 +4240,7 @@ function animate() {
 // button cancels it
 // (prepTimeout: CelesTrak can take a minute; waiting only 9 s played the
 // intro before anything had arrived, so it never showed)
-const SAT_INTRO = { nearRadii: 20, fadeIn: 2500, hold: 2500, fadeOut: 3000, prepTimeout: 60000 };
+const SAT_INTRO = { nearRadii: 20, fadeIn: 2500, hold: 2500, fadeOut: 3000, prepTimeout: 60000, straggler: 4000 };
 const satIntro = { state: 'waiting', t0: 0 };
 function endSatelliteIntro() {
     if (satIntro.state === 'done') return;
@@ -4272,7 +4272,11 @@ function updateSatelliteIntro() {
         setSatellitePreview(1e-4);                   // fetch and position everything, invisibly
     }
     if (satIntro.state === 'preparing') {
-        if (!satellitesReady() && now - satIntro.t0 < SAT_INTRO.prepTimeout) return;
+        // Go once everything's in, or a few seconds after the first group is
+        // (one slow or missing group held the whole intro up for a minute)
+        if (satellitesAnyReady() && !satIntro.firstReadyAt) satIntro.firstReadyAt = now;
+        const waitedEnough = satIntro.firstReadyAt && now - satIntro.firstReadyAt > SAT_INTRO.straggler;
+        if (!satellitesReady() && !waitedEnough && now - satIntro.t0 < SAT_INTRO.prepTimeout) return;
         satIntro.state = 'running';
         satIntro.t0 = now;
     }

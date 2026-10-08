@@ -1,0 +1,15 @@
+# FreakinSpace API (Cloudflare Worker). See worker/README.md
+name = "freakinspace-api"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+# Refresh satellite data every 3 hours (CelesTrak allows one download per
+# group per 2 hours)
+[triggers]
+crons = ["7 */3 * * *"]
+
+# Cached data. Create it once with:  npx wrangler kv namespace create DATA
+# and paste the id it prints here
+[[kv_namespaces]]
+binding = "DATA"
+id = "70413eb62a474cefbe061fea44f257df"

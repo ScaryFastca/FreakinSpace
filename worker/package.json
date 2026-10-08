@@ -1,0 +1,12 @@
+{
+  "name": "freakinspace-api",
+  "private": true,
+  "description": "Cloudflare Worker for FreakinSpace: cached satellite data, launches, missions",
+  "scripts": {
+    "dev": "wrangler dev --test-scheduled",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
