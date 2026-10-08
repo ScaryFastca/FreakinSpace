@@ -14,7 +14,7 @@
 // longitude. The Galaxy turns clockwise seen from the north pole, so the
 // trailing arms wind outward counter-clockwise.
 import * as THREE from 'three';
-import { raDecToAppFrame } from './celestialData.js?v=331';
+import { raDecToAppFrame } from './celestialData.js?v=334';
 
 export const SUN_TO_CENTER_LY = 26673;
 export const MILKY_WAY_RADIUS_LY = 52000; // visible disk, for picking and framing

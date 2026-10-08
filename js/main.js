@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=331';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=331';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=334';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=334';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=331';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=331';
-import { initCheeseMoon } from './cheeseMoon.js?v=331';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=331';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=331';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=331';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=331';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=331';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=331';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=331';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=334';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=334';
+import { initCheeseMoon } from './cheeseMoon.js?v=334';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=334';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=334';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=334';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=334';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=334';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=334';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesLoading } from './satellites.js?v=334';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=331';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=331';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=334';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=334';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1506,6 +1506,7 @@ function init() {
     renderer = new THREE.WebGLRenderer({
         canvas: document.getElementById('space-canvas'),
         antialias: true,
+        stencil: true, // (the UFO base's shaft is drawn through a stencil mask: ufos.js)
         logarithmicDepthBuffer: true // Essential for handling the massive scale difference between planetary and galactic views
     });
     // Filmic tone mapping: highlights roll off instead of clipping to white
@@ -4379,14 +4380,36 @@ function trackEvent(name) {
     try { window.goatcounter?.count?.({ path: name, title: name, event: true }); } catch { /* blocked */ }
 }
 
-function checkMarsUfos(R) {
+// Easter eggs wake up when a body's night side is kept lit with the cursor
+// sun for this long (a moment's slip is forgiven; looking away starts the
+// count again): the Mars base opens, the cheese appears on the Moon
+const NIGHT_EGG_HOLD_S = 10;
+const marsEgg = { lit: 0, lastLitAt: 0 }, moonEgg = { lit: 0, lastLitAt: 0 };
+// True once `egg`'s count is up (and restarts it). Leaves _ufoHit on the
+// lit spot
+function nightLitLongEnough(egg, R) {
     _ufoSphere.set(_csPos, R);
-    if (!_csRay.ray.intersectSphere(_ufoSphere, _ufoHit)) return;
+    if (!_csRay.ray.intersectSphere(_ufoSphere, _ufoHit)) return false;
     const normal = _csHit.copy(_ufoHit).sub(_csPos).normalize();
     const toSun = _csCam.copy(_csPos).negate().normalize(); // the Sun is at the origin
-    if (normal.dot(toSun) < -0.15) {
+    if (normal.dot(toSun) >= -0.15) return false;
+    const now = performance.now();
+    const gap = (now - egg.lastLitAt) / 1000;
+    egg.lastLitAt = now;
+    if (gap > 0.4) { egg.lit = 0; return false; }      // (just started, or came back)
+    egg.lit += gap;
+    if (egg.lit < NIGHT_EGG_HOLD_S) return false;
+    egg.lit = 0;
+    return true;
+}
+function checkMoonCheese(R) {
+    if (cheeseMoon && !cheeseMoon.revealed && nightLitLongEnough(moonEgg, R) && cheeseMoon.reveal()) trackEvent('egg/cheese-found');
+}
+function checkMarsUfos(R) {
+    if (nightLitLongEnough(marsEgg, R)) {
         // ...then they go for the visitor's city, and the camera follows them home
         const launched = launchUfos(scene, _ufoHit.clone(), _csPos.clone(), R, {
+            marsMesh: celestialBodies.get('Mars')?.mesh,
             earthMesh: celestialBodies.get('Earth')?.mesh,
             cityDirLocal: homeCityDirLocal(),
             camera, controls,
@@ -4451,6 +4474,7 @@ function updateCursorSun() {
                 cursorSun.distance = R * 3.6;
                 target = 1;
                 if (body.data?.name === 'Mars' && cursorSunLevel > 0.6) checkMarsUfos(R);
+                if (body.data?.name === 'Moon' && cursorSunLevel > 0.6) checkMoonCheese(R);
             }
         }
     }

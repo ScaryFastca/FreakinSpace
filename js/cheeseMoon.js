@@ -325,6 +325,19 @@ export function initCheeseMoon({ moonMesh, earthMesh, moonData, scene, setNightL
     wedge.position.set(0, -R * 0.995, 0);
     wedge.rotation.x = Math.PI;               // top face outward (−Y)
     moonMesh.add(wedge);
+    // Hidden (and unclickable: off the raycaster's layer) until someone keeps
+    // the Moon's night side lit for a while (main.js calls reveal())
+    let revealed = false, revealedAt = 0;
+    const hideWedge = () => { wedge.visible = false; wedge.layers.set(31); };
+    const showWedge = () => { wedge.visible = true; wedge.layers.set(0); };
+    hideWedge();
+    function reveal() {
+        if (revealed || triggeredAt !== null) return false;
+        revealed = true;
+        revealedAt = performance.now();
+        showWedge();
+        return true;
+    }
 
     const cheeseMap = cheeseTexture();
     // Where it will split: seed directions of a spherical Voronoi partition.
@@ -800,7 +813,7 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
         if (triggeredAt !== null) return;
         triggeredAt = simDate.getTime();
         triggerReal = performance.now();
-        wedge.visible = false;
+        hideWedge();
         planFlights(4);
     }
 
@@ -808,7 +821,8 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
     function reset() {
         if (triggeredAt === null) return;
         triggeredAt = null;
-        wedge.visible = true;
+        revealed = false;                          // (hidden again until the next reveal)
+        hideWedge();
         cheese.visible = false;
         solid.visible = true;
         fragGroup.visible = false;
@@ -862,6 +876,11 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
     }
 
     function update(simDate, visible = true) {
+        if (revealed && triggeredAt === null) {
+            // Grow in when revealed
+            const k = Math.min((performance.now() - revealedAt) / 900, 1);
+            wedge.scale.setScalar(Math.max(1e-3, 1 - Math.pow(1 - k, 3)));
+        }
         if (triggeredAt === null) return;
         if (!visible) setNightLights(1);
         const days = (simDate.getTime() - triggeredAt) / DAY;
@@ -869,7 +888,7 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
         // Quick transformation in real time, and only once it's "happened"
         const morph = before ? 0 : Math.min(1, (performance.now() - triggerReal) / 3000);
         cheese.visible = visible && morph > 0;
-        wedge.visible = before;
+        if (before && revealed) showWedge(); else hideWedge();
         solidMat.opacity = morph;
         solidMat.transparent = morph < 1;
         if (moonMesh.material) moonMesh.material.visible = morph < 1; // rock hidden once fully cheese
@@ -1119,7 +1138,8 @@ varying vec3 vCheeseDir;\n` + shader.fragmentShader.replace('#include <emissivem
     }
 
     return {
-        trigger, update, reset, rebase, showcase,
+        trigger, update, reset, rebase, showcase, reveal,
+        get revealed() { return revealed; },
         get active() { return triggeredAt !== null; },
         get triggeredAt() { return triggeredAt; },
         get flyers() { return flyers; },

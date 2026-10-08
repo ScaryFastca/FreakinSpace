@@ -1,13 +1,22 @@
-// Easter egg: light up Mars's night side with the cursor sun and a little
-// fleet of UFOs that was hiding there lifts off, streaks to Earth and attacks
-// the visitor's "You" spot with lasers and rockets, then leaves. The camera
-// rides home with them (main.js starts the trip home). Not in the README.
+// Easter egg: keep Mars's night side lit with the cursor sun for a while and
+// a round hatch in the ground slides open on a hidden alien base; a little
+// fleet of UFOs rises out of the shaft, streaks to Earth and attacks the
+// visitor's "You" spot with lasers and rockets, then leaves. The camera rides
+// home with them (main.js starts the trip home). Not in the README.
 import * as THREE from 'three';
-import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=331';
+import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=334';
 
 const FLEET = 6;
-const RISE_S = 0.7;       // lift off Mars
-const HOVER_S = 0.5;      // a startled pause
+// The base: a hatch (two curved halves) slides open, then the saucers rise
+// out of the shaft one after another and gather above it
+const HOLE = 0.19;        // hatch radius, in Mars radii
+const SHAFT = 0.34;       // shaft depth, in Mars radii
+const DOOR_S = 2.4;       // hatch sliding open
+const EMERGE_GAP = 0.45;  // between saucers leaving the shaft
+const EMERGE_S = 1.4;     // each saucer's climb out to its place above
+const GATHER_S = 0.7;     // all out, a pause before they go
+const LAUNCH_S = DOOR_S * 0.8 + (FLEET - 1) * EMERGE_GAP + EMERGE_S + GATHER_S;
+const CLOSE_S = 1.6;      // the hatch closing again behind them
 const TRAVEL_S = 5.6;     // Mars to the city (the camera's trip home takes ~6 s)
 const ATTACK_S = 7.5;     // circling and firing
 const LEAVE_S = 1.8;      // straight up and gone
@@ -68,6 +77,114 @@ const SHARED_GEO = [beamGeo, rocketGeo, flameGeo, blastGeo];
 
 function noPick(o) { o.traverse(c => { c.raycast = () => {}; }); return o; }
 
+// The hidden base, built round Mars's centre with Mars's radius as 1 and +Y
+// up through the hatch. The shaft is inside the planet, so it can't simply be
+// drawn: an invisible cap over the hole marks where the hole shows (stencil),
+// and the shaft and anything in it are drawn only there, over Mars
+const STENCIL = { stencilWrite: true, stencilRef: 1, stencilFunc: THREE.EqualStencilFunc,
+    stencilFail: THREE.KeepStencilOp, stencilZFail: THREE.KeepStencilOp, stencilZPass: THREE.KeepStencilOp };
+function inShaft(material) {
+    Object.assign(material, STENCIL, { depthTest: false, depthWrite: false });
+    return material;
+}
+function buildBase() {
+    const cap = Math.asin(HOLE);                 // the hatch's angular radius
+    const rimY = Math.cos(cap);
+    const base = new THREE.Group();
+    base.name = 'ufoBase';
+    // Marks the hole (where it's in view) in the stencil buffer
+    const mark = new THREE.Mesh(new THREE.SphereGeometry(1.0015, 48, 6, 0, Math.PI * 2, 0, cap),
+        new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, stencilWrite: true, stencilRef: 1,
+            stencilFunc: THREE.AlwaysStencilFunc, stencilZPass: THREE.ReplaceStencilOp }));
+    mark.renderOrder = 10;
+    base.add(mark);
+    // Shaft: glowing pad at the bottom, dark walls with rings of light
+    const floorY = rimY - SHAFT;
+    const pad = new THREE.Mesh(new THREE.CircleGeometry(HOLE, 40).rotateX(-Math.PI / 2),
+        inShaft(new THREE.MeshBasicMaterial({ color: 0x0f8f7a })));
+    pad.position.y = floorY;
+    pad.renderOrder = 10.5;
+    base.add(pad);
+    const padRing = new THREE.Mesh(new THREE.RingGeometry(HOLE * 0.55, HOLE * 0.62, 40).rotateX(-Math.PI / 2),
+        inShaft(new THREE.MeshBasicMaterial({ color: 0x8dffe9 })));
+    padRing.position.y = floorY + 0.002;
+    padRing.renderOrder = 10.6;
+    base.add(padRing);
+    const walls = new THREE.Mesh(new THREE.CylinderGeometry(HOLE, HOLE, SHAFT, 40, 1, true),
+        inShaft(new THREE.MeshBasicMaterial({ color: 0x1b2730, side: THREE.BackSide })));
+    walls.position.y = rimY - SHAFT / 2;
+    walls.renderOrder = 11;
+    base.add(walls);
+    const rings = [];
+    for (let k = 1; k <= 3; k++) {
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(HOLE * 0.995, 0.004, 6, 48).rotateX(Math.PI / 2),
+            inShaft(new THREE.MeshBasicMaterial({ color: 0x66ffcc, transparent: true })));
+        ring.position.y = rimY - SHAFT * k / 4;
+        ring.renderOrder = 11.2;
+        base.add(ring);
+        rings.push(ring);
+    }
+    // The hatch: two halves of a cap on the surface, each turning away
+    // about Mars's centre so it slides off along the ground
+    // (a faint glow of its own: it's on the night side)
+    const doorMat = new THREE.MeshStandardMaterial({ color: 0x6b6158, metalness: 0.7, roughness: 0.45,
+        emissive: 0x2c241c, emissiveIntensity: 1 });
+    const seamMat = new THREE.MeshBasicMaterial({ color: 0xffb340 });
+    const halves = [0, Math.PI].map((phi, k) => {
+        const half = new THREE.Mesh(new THREE.SphereGeometry(1.003, 32, 8, phi, Math.PI, 0, cap * 1.02), doorMat);
+        half.renderOrder = 12;
+        // Glowing strip along its straight edge, where the two halves meet
+        const seam = new THREE.Mesh(new THREE.TorusGeometry(1.0045, 0.004, 4, 24, cap * 2), seamMat);
+        seam.rotation.z = Math.PI / 2 - cap;
+        seam.position.z = (k ? -1 : 1) * 0.004;
+        half.add(seam);
+        base.add(half);
+        return half;
+    });
+    // Seam and rim lights, blinking while it moves
+    const rimLights = [];
+    for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2;
+        const light = new THREE.Mesh(new THREE.SphereGeometry(0.006, 6, 4),
+            new THREE.MeshBasicMaterial({ color: i % 2 ? 0xff5544 : 0xffcc33, transparent: true }));
+        const r = Math.sin(cap * 1.06), y = Math.cos(cap * 1.06) * 1.004;
+        light.position.set(Math.cos(a) * r, y, Math.sin(a) * r);
+        base.add(light);
+        rimLights.push(light);
+    }
+    base.userData = { cap, rimY, floorY, halves, rings, rimLights, shaftParts: [pad, padRing, walls, ...rings] };
+    noPick(base);
+    return base;
+}
+
+// Open (k 0 → 1) or close the hatch
+function setHatch(base, k) {
+    const { cap, halves } = base.userData;
+    const e = k * k * (3 - 2 * k);
+    const slide = cap * 2.1 * e;
+    // (a little lift first, so it reads as a lid coming loose)
+    const lift = 1 + 0.004 * Math.sin(Math.min(k * 3, 1) * Math.PI);
+    halves[0].rotation.set(slide, 0, 0);
+    halves[1].rotation.set(-slide, 0, 0);
+    halves.forEach(h => h.scale.setScalar(lift));
+}
+
+// Saucers still in the shaft are drawn through the hole too; once out,
+// normally
+function setInShaft(ufo, inside) {
+    if (ufo.userData.inShaft === inside) return;
+    ufo.userData.inShaft = inside;
+    ufo.traverse(o => {
+        if (!o.isMesh) return;
+        o.renderOrder = inside ? 11.5 : 0;
+        const m = o.material;
+        m.userData.depthTest ??= m.depthTest;
+        m.userData.depthWrite ??= m.depthWrite;
+        if (inside) inShaft(m);
+        else Object.assign(m, { stencilWrite: false, depthTest: m.userData.depthTest, depthWrite: m.userData.depthWrite });
+    });
+}
+
 // Mars: the world surface point under the cursor on its night side, its centre
 // and visual radius. attack: { earthMesh, cityDirLocal, camera, controls,
 // takeCamera() (stop other camera moves), userBusy() (mouse held: let go),
@@ -76,10 +193,25 @@ export function launchUfos(scene, surfacePoint, center, radius, attack) {
     const now = performance.now();
     if (fleet || now - lastEnd < COOLDOWN_MS) return false;
     const normal = surfacePoint.clone().sub(center).normalize();
-    const t1 = new THREE.Vector3(0, 1, 0).cross(normal);
-    if (t1.lengthSq() < 1e-6) t1.set(1, 0, 0).cross(normal);
-    t1.normalize();
-    const t2 = new THREE.Vector3().crossVectors(normal, t1);
+    // The base turns with Mars (attack.marsMesh), so it's built in Mars's
+    // own frame: centre at Mars's centre, +Y up through the hatch, Mars's
+    // radius as 1
+    const mars = attack.marsMesh;
+    const base = buildBase();
+    if (mars) {
+        mars.updateWorldMatrix(true, false);
+        const ws = mars.getWorldScale(new THREE.Vector3()).x || 1;
+        const localUp = mars.worldToLocal(surfacePoint.clone()).normalize();
+        base.quaternion.setFromUnitVectors(UP, localUp);
+        base.scale.setScalar(radius / ws);
+        mars.add(base);
+    } else {
+        base.position.copy(center);
+        base.quaternion.setFromUnitVectors(UP, normal);
+        base.scale.setScalar(radius);
+        scene.add(base);
+    }
+    setHatch(base, 0);
 
     const group = new THREE.Group();
     group.name = 'ufoFleet';
@@ -87,11 +219,14 @@ export function launchUfos(scene, surfacePoint, center, radius, attack) {
     const ufos = [];
     for (let i = 0; i < FLEET; i++) {
         const ufo = noPick(buildUfo());
-        const ang = i / FLEET * Math.PI * 2 + Math.random() * 0.6;
-        const r = radius * (0.06 + 0.12 * Math.random());
         const u = ufo.userData;
-        u.home = surfacePoint.clone().addScaledVector(t1, Math.cos(ang) * r).addScaledVector(t2, Math.sin(ang) * r);
-        u.delay = Math.random() * 0.35;
+        // In the base's frame: waiting on the pad, then a place above the
+        // hatch once out (a loose ring, a little higher for the later ones)
+        const ang = i / FLEET * Math.PI * 2 + Math.random() * 0.5;
+        const r = 0.12 + 0.1 * Math.random();
+        u.homeLocal = new THREE.Vector3(Math.cos(ang) * r, base.userData.rimY + 0.14 + 0.03 * Math.random(), Math.sin(ang) * r);
+        u.padLocal = new THREE.Vector3(0, base.userData.floorY + 0.05, 0);
+        u.delay = DOOR_S * 0.8 + i * EMERGE_GAP;
         u.phase = Math.random() * 6.28;
         u.orbit0 = i / FLEET * Math.PI * 2;          // places round the city
         u.orbitKm = ORBIT_KM * (0.7 + 0.6 * Math.random());
@@ -99,20 +234,31 @@ export function launchUfos(scene, surfacePoint, center, radius, attack) {
         u.nextLaser = 0.3 + Math.random() * 0.6;
         u.nextRocket = 0.8 + Math.random() * 1.0;
         ufo.scale.setScalar(sizeMars);
-        ufo.quaternion.setFromUnitVectors(UP, normal);
-        ufo.position.copy(u.home);
+        ufo.visible = false;                     // (until the hatch is open)
+        setInShaft(ufo, true);
         group.add(ufo);
         ufos.push(ufo);
     }
     scene.add(group);
-    fleet = { group, ufos, t0: now, normal, radius, center: center.clone(), sizeMars, attack, effects: [], tripStarted: false, lastNow: now };
+    fleet = { group, ufos, base, t0: now, normal: normal.clone(), radius, center: center.clone(), sizeMars, attack,
+        effects: [], tripStarted: false, lastNow: now };
     return true;
+}
+
+// Where the base is this frame (Mars turns and moves): updates fleet.center
+// and fleet.normal, and the base's local → world matrix
+const _bq = new THREE.Quaternion();
+function placeBase() {
+    const b = fleet.base;
+    b.updateWorldMatrix(true, false);
+    b.getWorldPosition(fleet.center);
+    fleet.normal.copy(UP).applyQuaternion(b.getWorldQuaternion(_bq)).normalize();
 }
 
 // True while the fleet is over the city firing (main.js shakes the "You" label)
 export function ufoAttackActive() {
     if (!fleet) return false;
-    const t = (performance.now() - fleet.t0) / 1000 - RISE_S - HOVER_S - TRAVEL_S;
+    const t = (performance.now() - fleet.t0) / 1000 - LAUNCH_S - TRAVEL_S;
     return t > 0 && t < ATTACK_S;
 }
 
@@ -322,9 +468,18 @@ export function updateUfos() {
     const { attack } = fleet;
     const earth = attack?.earthMesh;
     const f = earth ? cityFrame(attack) : null;
-    const tTravel = RISE_S + HOVER_S, tAttack = tTravel + TRAVEL_S, tLeave = tAttack + ATTACK_S, tEnd = tLeave + LEAVE_S;
+    const tTravel = LAUNCH_S, tAttack = tTravel + TRAVEL_S, tLeave = tAttack + ATTACK_S, tEnd = tLeave + LEAVE_S;
 
     if (earth) { earth.updateWorldMatrix(true, false); earth.getWorldQuaternion(_q); }
+    // The base: hatch open, shaft lights, then closed again behind them
+    placeBase();
+    const bd = fleet.base.userData;
+    const open = Math.min(t / DOOR_S, 1);
+    const close = Math.min(Math.max((t - tTravel - 0.8) / CLOSE_S, 0), 1);
+    setHatch(fleet.base, open * (1 - close));
+    const blink = 0.5 + 0.5 * Math.sin(t * 9);
+    bd.rimLights.forEach((l, j) => { l.material.opacity = (open < 1 || close > 0) && close < 1 ? (j % 2 ? blink : 1 - blink) : 0.15; });
+    bd.rings.forEach((ring, k) => { ring.material.opacity = Math.min(open * 1.5, 1) * (0.55 + 0.45 * Math.sin(t * 4 - k * 1.3)); });
     const dt = Math.min((now - fleet.lastNow) / 1000, 0.1);
     fleet.lastNow = now;
     if (f && t >= tTravel && !fleet.tripStarted) startTravel(f, earth);
@@ -333,12 +488,22 @@ export function updateUfos() {
         const u = ufo.userData;
         const lt = t - u.delay;
         if (!f || t < tTravel) {
-            // Rise off Mars with a nervous wobble
-            const rise = Math.min(Math.max(lt, 0) / RISE_S, 1);
-            const eased = rise * rise * (3 - 2 * rise);
-            ufo.position.copy(u.home).addScaledVector(fleet.normal, fleet.radius * (0.16 * eased + 0.006 * Math.sin(lt * 18 + u.phase)));
-            ufo.rotateY(0.25);
+            // Up out of the shaft and over to its place above the hatch,
+            // with a nervous wobble once there
+            const k = Math.min(Math.max(lt / EMERGE_S, 0), 1);
+            ufo.visible = open > 0.35;
+            const up = THREE.MathUtils.smoothstep(k, 0, 0.6);            // climb the shaft first
+            const out = THREE.MathUtils.smoothstep(k, 0.45, 1);           // then drift to its place
+            _v.copy(u.padLocal).lerp(_w.set(0, u.homeLocal.y, 0), up);
+            _v.x = u.homeLocal.x * out; _v.z = u.homeLocal.z * out;
+            _v.y += 0.004 * Math.sin(t * 18 + u.phase) * out;
+            setInShaft(ufo, _v.y < bd.rimY + 0.02);
+            ufo.position.copy(_v).applyMatrix4(fleet.base.matrixWorld);
+            ufo.quaternion.setFromUnitVectors(UP, fleet.normal);
+            ufo.rotateY(lt * 4);
         } else if (t < tAttack) {
+            setInShaft(ufo, false);
+            ufo.visible = true;
             // Along the fleet's curved path (off Mars, round anything in the
             // way, down onto the city), keeping formation, shrinking to the
             // attack scale on the way, tipping from Mars-flat to city-flat
@@ -406,6 +571,8 @@ export function updateUfos() {
     if (t > tEnd && !fleet.effects.length) {
         fleet.group.traverse(o => { if (o.geometry && !SHARED_GEO.includes(o.geometry)) o.geometry.dispose(); o.material?.dispose(); });
         fleet.group.removeFromParent();
+        fleet.base.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+        fleet.base.removeFromParent();
         fleet = null;
         lastEnd = performance.now();
     }
