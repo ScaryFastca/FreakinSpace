@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=342';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=342';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=344';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=344';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=342';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=342';
-import { initCheeseMoon } from './cheeseMoon.js?v=342';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=342';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=342';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=342';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=342';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=342';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=342';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=342';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=344';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=344';
+import { initCheeseMoon } from './cheeseMoon.js?v=344';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=344';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=344';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=344';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=344';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=344';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=344';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=344';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=342';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=342';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=344';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=344';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -71,7 +71,7 @@ function pumpHeavyUploads() {
     const h = heavyUploads;
     if (!h.queue.length || h.busy) return;
     const now = performance.now();
-    if (!h.readyAt) h.readyAt = now + 7500;   // (after the side tabs' opening sequence)
+    if (!h.readyAt) h.readyAt = now + 7500;   // (after the controls' fade-up on load)
     let nearEarth = false;
     const earth = celestialBodies.get('Earth')?.mesh;
     if (earth && viewMode === 'map') {
@@ -5975,7 +5975,7 @@ const SIDE_TAB_TITLES = { solar: 'Solar System', lineup: 'Size Lineup', stars: '
     blackholes: 'Black Holes', galaxies: 'Galaxies', controls: 'Controls' };
 const CATEGORY_TAB = { 'Solar System': 'solar', 'Small Bodies': 'solar', 'Stars': 'stars', 'Exoplanets': 'planets',
     'Black Holes': 'blackholes', 'Galaxies': 'galaxies', 'Size Comparison': 'lineup' };
-const SIDE_INTRO = { delay: 900, step: 550, controls: 3200 };
+const SIDE_INTRO = { delay: 900, controls: 4500 };
 const sideTabs = { open: null, pinned: false, timer: null, introTimers: [] };
 
 // Move the list's categories (just rendered into #object-list) into their tabs
@@ -6007,7 +6007,10 @@ function openSidePanel(tab, pin) {
     panel.querySelectorAll('.side-pane').forEach(p => p.classList.toggle('active', p.dataset.tab === tab));
     document.querySelectorAll('#side-tabs .side-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
     panel.querySelector('.side-panel-title').textContent = SIDE_TAB_TITLES[tab] || '';
+    const wasOpen = panel.classList.contains('open');
     panel.classList.toggle('wide', tab === 'controls');
+    panel.querySelector('.side-panel-hint').hidden = tab !== 'controls' || pin;   // (already locked open)
+    if (!wasOpen) void panel.offsetWidth;   // start from the closed pose for this tab (controls fade up)
     panel.classList.add('open');
     panel.setAttribute('aria-hidden', 'false');
 }
@@ -6067,16 +6070,11 @@ function setupSideTabs() {
     MOBILE_LAYOUT_MQ.addEventListener('change', relayout);
     window.addEventListener('resize', relayout);
 
-    // The opening sequence: each tab in turn, top to bottom, then the controls
+    // On load the controls fade up for a few seconds (the tabs show themselves)
     if (isMobileLayout()) return;
-    let at = SIDE_INTRO.delay;
-    const tabs = [...rail.querySelectorAll('.side-tab')].filter(t => !t.hidden);
-    tabs.forEach(tab => {
-        const id = tab.dataset.tab;
-        sideTabs.introTimers.push(setTimeout(() => openSidePanel(id, false), at));
-        at += id === 'controls' ? SIDE_INTRO.controls : SIDE_INTRO.step;
-    });
-    sideTabs.introTimers.push(setTimeout(() => { if (!sideTabs.pinned) closeSidePanel(); sideTabs.introTimers = []; }, at));
+    const { delay, controls } = SIDE_INTRO;
+    sideTabs.introTimers.push(setTimeout(() => openSidePanel('controls', false), delay));
+    sideTabs.introTimers.push(setTimeout(() => { if (!sideTabs.pinned) closeSidePanel(); sideTabs.introTimers = []; }, delay + controls));
 }
 
 function setupSidebarPeek() {
