@@ -4,7 +4,7 @@
 // visitor's "You" spot with lasers and rockets, then leaves. The camera rides
 // home with them (main.js starts the trip home). Not in the README.
 import * as THREE from 'three';
-import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=337';
+import { makePath, pathPoint, pathTangent, createShipCamera, steerShipCamera, swingVec, orbitBlend, turnToward } from './flight.js?v=338';
 
 const FLEET = 6;
 // The base: a hatch (two curved halves) slides open, then the saucers rise

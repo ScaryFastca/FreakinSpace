@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=337';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=337';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=338';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=338';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=337';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=337';
-import { initCheeseMoon } from './cheeseMoon.js?v=337';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=337';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=337';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=337';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=337';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=337';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=337';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=337';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=338';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=338';
+import { initCheeseMoon } from './cheeseMoon.js?v=338';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=338';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=338';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=338';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=338';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=338';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=338';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=338';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=337';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=337';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=338';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=338';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1814,16 +1814,23 @@ function init() {
     renderer.domElement.addEventListener('pointerdown', takeCamera);
     renderer.domElement.addEventListener('wheel', takeCamera, { passive: true });
 
-    // ↑ / ↓ spread out / compress the distance scale while held; the motion
+    // Z / X compress / spread out the distance scale while held; the motion
     // eases in and out (updateScaleKeys), ignoring the OS key auto-repeat
     window.addEventListener('keydown', (e) => {
-        if ((e.code !== 'ArrowUp' && e.code !== 'ArrowDown') || arrowsTaken(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
-        e.preventDefault();
-        if (e.shiftKey) return;                   // (Shift + ↑↑↓↓: the hologram secret)
+        if ((e.code !== 'KeyZ' && e.code !== 'KeyX') || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
         scaleKeys[e.code] = true;
     });
     window.addEventListener('keyup', (e) => { if (e.code in scaleKeys) scaleKeys[e.code] = false; });
-    window.addEventListener('blur', () => { scaleKeys.ArrowUp = scaleKeys.ArrowDown = false; });
+    window.addEventListener('blur', () => { scaleKeys.KeyZ = scaleKeys.KeyX = false; });
+
+    // 1: the present moment at real-time speed (watching live events: a
+    // launch, the ISS going over)
+    window.addEventListener('keydown', (e) => {
+        if ((e.code !== 'Digit1' && e.code !== 'Numpad1') || e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+        document.getElementById('tl-goto-now')?.click();
+        simPaused = false;
+        setSimRateSps(1);
+    });
 
     // H hides every panel and button for clean screenshots and recordings
     let uiHintTimer = null;
@@ -7442,17 +7449,17 @@ function setPullFarStars(on) {
 const SCALE_TRANSITION_MS = 1600;
 let scaleTransition = null;
 
-// ↑ / ↓: hold to glide the scale. Speed eases toward the target and back to
+// Z / X: hold to glide the scale. Speed eases toward the target and back to
 // zero on release, so moves start and stop smoothly (a tap is a small nudge).
 const SCALE_KEY_RATE = 0.2;   // slider units per second at full speed (0→1 in ~5 s)
 const SCALE_KEY_EASE = 0.2;   // time constant of each of two smoothing stages
-const scaleKeys = { ArrowUp: false, ArrowDown: false };
+const scaleKeys = { KeyZ: false, KeyX: false };
 let scaleKeyDrive = 0, scaleKeyVelocity = 0, scaleKeyLastTime = 0;
 function updateScaleKeys() {
     const now = performance.now();
     const dt = Math.min((now - scaleKeyLastTime) / 1000, 0.1);
     scaleKeyLastTime = now;
-    const input = viewMode === 'map' ? (scaleKeys.ArrowUp ? 1 : 0) - (scaleKeys.ArrowDown ? 1 : 0) : 0;
+    const input = viewMode === 'map' ? (scaleKeys.KeyX ? 1 : 0) - (scaleKeys.KeyZ ? 1 : 0) : 0;
     // Two first-order stages in series: speed follows an S-curve, so the
     // acceleration eases in too (one stage lurches into motion)
     const blend = 1 - Math.exp(-dt / SCALE_KEY_EASE);
@@ -9507,8 +9514,6 @@ function setupStellarComparison() {
             && (target.isContentEditable
                 || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
         if (isTyping || event.repeat || event.ctrlKey || event.metaKey || event.altKey) return;
-        // Shift held: plain ↑ / ↓ glide the distance scale now
-        if (!event.shiftKey) { if (event.key !== 'Shift') sequenceIndex = 0; return; }
 
         if (event.key === toggleSequence[sequenceIndex]) {
             sequenceIndex += 1;
