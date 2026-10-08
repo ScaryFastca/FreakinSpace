@@ -52,7 +52,7 @@ no framework, no account.
 - **Satellites.** Space stations, the GPS constellation, the geostationary belt,
   and optionally all ~10,000 Starlink satellites, from CelesTrak's public catalogue.
   They start hidden and show themselves briefly the first time you come close
-  to Earth; the Satellites button turns them on for good
+  to Earth; turn them on for good in the Display menu
 - **Day and night.** An 8K Earth with city lights that come on along the terminator
 - **Satellite view.** Keep scrolling into Earth to go from orbit to street level,
   with high-resolution imagery streaming in as you descend. Scrolling zooms toward
@@ -111,7 +111,7 @@ no framework, no account.
 | Zoom | Scroll (toward the cursor near Earth) | Pinch |
 | Pan | Shift + drag, or middle mouse | Two-finger drag |
 | Roll the view | Ctrl + drag | – |
-| North up / level horizon | Compass and horizon buttons (top left) | Same buttons |
+| North up / Solar System up / level horizon | North up button (hover it for Solar System up), horizon button (top left) | Same buttons |
 | Select / fly to | Click an object or pick it from the side panel | Tap |
 | Magnify a distant object | Rest the cursor on it for a second | – |
 | Light up a planet or moon | Point at it (the cursor becomes a little sun) | Touch and hold, then slide |
@@ -120,10 +120,11 @@ no framework, no account.
 | Spread out / compress distances | X / Z (hold), or the Scale slider | Scale slider |
 | Hide / show orbit lines | Q | – |
 | Fly to the Sun, a planet, the Moon, Pluto or the ISS | S Sun (again: Saturn), M Moon (again: Mars, then Mercury), E Earth, V Venus, J Jupiter, U Uranus, N Neptune, P Pluto, I ISS | – |
-| Desktop globe mode | G, or the Globe button | Globe button |
+| Desktop globe mode | G, or Display → Desktop globe | Display → Desktop globe |
 | Back to the present time | R, or the Now button | Now button |
 | Now, at real-time speed | 1 | Now button, then Real time |
 | Hide / show the interface | H | – |
+| Hide / show just the time controls | Time bar button | Time tab |
 
 On phones, a bottom bar opens the object list, time controls and settings.
 

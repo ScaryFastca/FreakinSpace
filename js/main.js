@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=347';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=347';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=349';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=349';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=347';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=347';
-import { initCheeseMoon } from './cheeseMoon.js?v=347';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=347';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=347';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=347';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=347';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=347';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=347';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=347';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=349';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=349';
+import { initCheeseMoon } from './cheeseMoon.js?v=349';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=349';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=349';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=349';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=349';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=349';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=349';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=349';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=347';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=347';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=349';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=349';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -684,6 +684,7 @@ let milkyWay = null;
 let milkyWaySkyGlow = null; // the band across the night sky (part of the star field)
 // Milky Way glow slider, 0..1 (Stars menu); remembered between visits
 const MW_GLOW_KEY = 'milkyWayGlow:v1';
+const TIME_BAR_KEY = 'timeBar:v1';
 let milkyWayGlowLevel = (() => {
     const v = parseFloat(localStorage.getItem(MW_GLOW_KEY));
     return Number.isFinite(v) ? THREE.MathUtils.clamp(v, 0, 1) : 0.6;
@@ -820,7 +821,7 @@ const ISS_VIEW_SPS = 120;   // 2 min/s
 const ISS_CAM_OFFSET = new THREE.Vector3(0, 0.04, -0.11);
 const ISS_TARGET_OFFSET = new THREE.Vector3(0, 0.015, 0.01);
 let lastFrameTime = Date.now();     // For delta-time calculations
-let lastTimelineDisplayMinute = null;
+let lastTimelineDisplaySecond = null;
 let realisticMoonPositionsDirty = true;
 
 function mapSliderToRealisticSpeed(val) {
@@ -1283,7 +1284,10 @@ function startRollAnimation(kind) {
 // Per frame, after the follow/chase code and before controls.update()
 function updateViewRoll() {
     if (!rollAnimation) return;
-    const want = rollAnimation.kind === 'north' ? northDirection(_rollTmp) : horizonUpDirection(_rollTmp);
+    const kind = rollAnimation.kind;
+    // (Solar System up: the orbits' plane is the scene's XZ plane)
+    const want = kind === 'north' ? northDirection(_rollTmp)
+        : kind === 'ecliptic' ? _rollTmp.set(0, 1, 0) : horizonUpDirection(_rollTmp);
     const target = want && screenUpFrom(want, _rollTarget);
     if (!target) { rollAnimation = null; return; }
     const t = Math.min(1, (performance.now() - rollAnimation.start) / ROLL_ANIM_MS);
@@ -1318,6 +1322,8 @@ function setupViewRoll(canvas) {
     window.addEventListener('pointercancel', end);
 
     document.getElementById('compass-btn')?.addEventListener('click', () => startRollAnimation('north'));
+    document.querySelectorAll('#north-menu [data-roll]').forEach(b =>
+        b.addEventListener('click', () => startRollAnimation(b.dataset.roll)));
     document.getElementById('level-horizon-btn')?.addEventListener('click', () => startRollAnimation('horizon'));
 }
 
@@ -1667,10 +1673,11 @@ function init() {
     });
     document.getElementById('home-indicator-toggle').addEventListener('click', toggleHomeIndicator);
     setSatelliteStatusListener(problems => {
-        const btn = document.getElementById('satellites-toggle');
-        if (!btn) return;
-        btn.classList.toggle('has-warning', problems.length > 0);
-        btn.title = problems.length ? problems.join('\n') : 'Live satellite positions from CelesTrak';
+        const heading = document.getElementById('satellites-heading');
+        if (!heading) return;
+        heading.classList.toggle('has-warning', problems.length > 0);
+        heading.title = problems.length ? problems.join('\n') : 'Live satellite positions from CelesTrak';
+        document.querySelector('#display-menu .popup-menu-button')?.classList.toggle('has-warning', problems.length > 0);
     });
     // Night side up close: dark street map with labels, or city lights.
     // Remembered between visits.
@@ -1689,10 +1696,29 @@ function init() {
     // Globe mode: Earth as a desktop globe (grid, glowing equator, tilted stand)
     const applyGlobeMode = on => {
         setGlobeMode(on, celestialBodies.get('Earth')?.mesh, scene);
-        const label = document.getElementById('globe-mode');
-        if (label) label.textContent = on ? 'On' : 'Off';
+        const box = document.getElementById('menu-globe');
+        if (box) box.checked = on;
     };
-    document.getElementById('globe-toggle')?.addEventListener('click', () => applyGlobeMode(!isGlobeMode()));
+    document.getElementById('menu-globe')?.addEventListener('change', e => applyGlobeMode(e.target.checked));
+    // Time bar: hide just the time controls (remembered)
+    const applyTimeBar = on => {
+        document.getElementById('timeline-panel')?.classList.toggle('user-hidden', !on);
+        const label = document.getElementById('time-bar-mode');
+        if (label) label.textContent = on ? 'On' : 'Off';
+        try { localStorage.setItem(TIME_BAR_KEY, on ? '1' : '0'); } catch { /* private mode */ }
+    };
+    let timeBarOn = true;
+    try { timeBarOn = localStorage.getItem(TIME_BAR_KEY) !== '0'; } catch { /* private mode */ }
+    applyTimeBar(timeBarOn);
+    document.getElementById('time-bar-toggle')?.addEventListener('click', () => { timeBarOn = !timeBarOn; applyTimeBar(timeBarOn); });
+    // Pointer light: the little sun under the cursor (touch and hold on phones)
+    const applyCursorLight = () => {
+        const label = document.getElementById('cursor-light-mode');
+        if (label) label.textContent = cursorLightOn ? 'On' : 'Off';
+        try { localStorage.setItem(CURSOR_LIGHT_KEY, cursorLightOn ? '1' : '0'); } catch { /* private mode */ }
+    };
+    applyCursorLight();
+    document.getElementById('cursor-light-toggle')?.addEventListener('click', () => { cursorLightOn = !cursorLightOn; applyCursorLight(); });
     window.addEventListener('keydown', (e) => {
         if (e.code !== 'KeyG' || e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
         applyGlobeMode(!isGlobeMode());
@@ -1712,13 +1738,11 @@ function init() {
             document.documentElement.style.setProperty('--settings-row-height', settingsRow.offsetHeight + 'px');
         }).observe(settingsRow);
     }
-    document.getElementById('satellites-toggle')?.addEventListener('click', () => {
-        const label = document.getElementById('satellites-mode');
-        const next = SATELLITE_MODES[(SATELLITE_MODES.indexOf(label.textContent) + 1) % SATELLITE_MODES.length];
-        label.textContent = next;
-        setSatelliteMode(next);
+    document.querySelectorAll('input[name="sat-mode"]').forEach(r => r.addEventListener('change', () => {
+        if (!r.checked || !SATELLITE_MODES.includes(r.value)) return;
+        setSatelliteMode(r.value);
         endSatelliteIntro();                     // the user's choice from here on
-    });
+    }));
     setupPopupMenus();
     setupScaleMenu();
     setupSmallBodiesMenu();
@@ -1817,10 +1841,18 @@ function init() {
         } else if (e.code === 'KeyR') {
             endCheeseMoon(false);                 // back to the present (and the plain Moon)
         } else if (FLY_KEYS[e.code] && viewMode === 'map') {
-            // Next in the list after the one we're at (first if none). Hidden
-            // ones are skipped: the ISS until its orbit loads, Pluto with the
-            // small bodies turned off
-            const list = FLY_KEYS[e.code].filter(n => celestialBodies.get(n)?.mesh.visible);
+            // Next in the list after the one we're at (first if none). Ones
+            // that aren't there are skipped: the ISS until its orbit loads,
+            // Pluto with dwarf planets turned off. (Not "hidden right now":
+            // far out, the planets are culled from view, and E stopped working)
+            const flyable = n => {
+                const body = celestialBodies.get(n);
+                if (!body?.mesh) return false;
+                if (n === 'ISS') return !!body.mesh.parent;
+                if (n === 'Pluto') return document.querySelector('input[data-small-group="dwarf"]')?.checked !== false;
+                return true;
+            };
+            const list = FLY_KEYS[e.code].filter(flyable);
             if (!list.length) return;
             const at = list.indexOf(currentFocusedBody);
             const name = list[(at + 1) % list.length];
@@ -3653,6 +3685,7 @@ function animate() {
         sunLight.visible = viewMode === 'map' && !(focusedBody && focusedBody.isDistant);
     }
 
+    updateNowButton();
     // Advance simulation date and update planet positions
     if (!simPaused && simulationRate !== 0) {
         simDate = new Date(simDate.getTime() + (realDeltaMs / 1000) * simulationRate);
@@ -4474,32 +4507,55 @@ function checkMarsUfos(R) {
 // light up the night side, or sweep it round to an edge. Short range (a few
 // body radii) so the rest of the scene isn't touched; fades in and out.
 let cursorSun = null;
-const CURSOR_SUN = { intensity: 3.0, minRadiusPx: 12, ease: 0.15 };
+const CURSOR_SUN = { intensity: 3.0, minRadiusPx: 12, ease: 0.15, closeDist: 2.5 };
+const CURSOR_LIGHT_KEY = 'cursorLight:v1';
+let cursorLightOn = (() => { try { return localStorage.getItem(CURSOR_LIGHT_KEY) !== '0'; } catch { return true; } })();
+const _csSphere = new THREE.Sphere();
 const _csPos = new THREE.Vector3(), _csCam = new THREE.Vector3(), _csHit = new THREE.Vector3(),
-    _csRay = new THREE.Raycaster(), _csNdc = new THREE.Vector2(), _csPlane = new THREE.Plane();
+    _csRay = new THREE.Raycaster(), _csPlane = new THREE.Plane();
 let cursorSunLevel = 0;
 function updateCursorSun() {
     if (!cursorSun) return;
     // (on phones a held finger plays the cursor: see the touch sun below)
     const touch = touchSun.active ? touchSun : null;
-    const body = touch ? touch.body : hoveredBody;
     const px = touch ? touch.x : lastMouseX, py = touch ? touch.y : lastMouseY;
+    let body = touch ? touch.body : hoveredBody;
+    // Down among the satellites the pointer is nearly always on one of them
+    // (too small to light): light the planet behind it instead
+    if (!touch && (!body || body.type === 'satellite' || body.type === 'smallbody') && viewMode === 'map' && lastMouseX >= 0) {
+        body = bodyDiscAt(px, py) || body;
+    }
     let target = 0, R = 0;
     // (map view only: Size Comparison lights everything from the viewer's side)
-    if (body?.mesh?.visible && viewMode === 'map'
+    if (cursorLightOn && body?.mesh?.visible && viewMode === 'map'
         && (touch ||(lastMouseX >= 0 && !isMouseOverUI && !HOVER_NONE_MQ.matches && !mouseButtonsHeld))
         && body.type !== 'star' && !SELF_LIT_TYPES.has(body.data?.type) && body !== milkyWayBody) {
         body.mesh.getWorldPosition(_csPos);
         R = magnifierRadius(body.mesh);
         const dist = camera.position.distanceTo(_csPos);
         const radiusPx = R * (window.innerHeight / 2) / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) / Math.max(dist, 1e-9);
-        if (R > 0 && radiusPx >= CURSOR_SUN.minRadiusPx && dist > R * 1.05) {
-            // Where the cursor ray crosses the plane through the body facing us
-            _csNdc.set(px / window.innerWidth * 2 - 1, 1 - py / window.innerHeight * 2);
-            _csRay.setFromCamera(_csNdc, camera);
+        if (R > 0 && radiusPx >= CURSOR_SUN.minRadiusPx && dist > R * 1.00001) {
+            // (ray built from the field of view: setFromCamera unprojects a point
+            // on the near plane, which is float noise this close to Earth)
+            const tanHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+            _csRay.ray.origin.copy(camera.position);
+            _csRay.ray.direction.set((px / window.innerWidth * 2 - 1) * tanHalf * camera.aspect,
+                (1 - py / window.innerHeight * 2) * tanHalf, -1).applyQuaternion(camera.quaternion).normalize();
             _csCam.copy(camera.position).sub(_csPos).normalize();
             _csPlane.setFromNormalAndCoplanarPoint(_csCam, _csPos);
-            if (_csRay.ray.intersectPlane(_csPlane, _csHit)) {
+            // Close in (satellite height and below): the light hangs over the
+            // spot under the cursor, as high as you are, so it follows the
+            // pointer across the ground instead of sitting off to one side
+            if (dist < R * CURSOR_SUN.closeDist && _csRay.ray.intersectSphere(_csSphere.set(_csPos, R), _csHit)) {
+                // (lower down a tighter spot, about half the view across, so it
+                // visibly follows the pointer; 1.5× your height at the hand-off)
+                const h = Math.max(dist - R, R * 1e-5);
+                const lift = h * (0.5 + h / (R * (CURSOR_SUN.closeDist - 1)));
+                cursorSun.position.copy(_csHit).addScaledVector(_csHit.sub(_csPos).normalize(), lift);
+                cursorSun.distance = lift * 1.6;
+                target = 1;
+            } else if (_csRay.ray.intersectPlane(_csPlane, _csHit)) {
+                // Where the cursor ray crosses the plane through the body facing us
                 // Out from the centre toward the cursor (doubled, so the edge is
                 // lit from the side), then forward toward the camera
                 _csHit.sub(_csPos).multiplyScalar(2).clampLength(0, R * 4);
@@ -4510,9 +4566,9 @@ function updateCursorSun() {
                 // longer reach lit moons on the far side straight through it
                 cursorSun.distance = R * 3.6;
                 target = 1;
-                if (body.data?.name === 'Mars' && cursorSunLevel > 0.6) checkMarsUfos(R);
-                if (body.data?.name === 'Moon' && cursorSunLevel > 0.6) checkMoonCheese(R);
             }
+            if (target && body.data?.name === 'Mars' && cursorSunLevel > 0.6) checkMarsUfos(R);
+            if (target && body.data?.name === 'Moon' && cursorSunLevel > 0.6) checkMoonCheese(R);
         }
     }
     cursorSunLevel += (target - cursorSunLevel) * CURSOR_SUN.ease;
@@ -4549,7 +4605,7 @@ function bodyDiscAt(x, y) {
         body.mesh.getWorldPosition(_tsPos);
         const dist = camera.position.distanceTo(_tsPos);
         const R = magnifierRadius(body.mesh);
-        if (!(R > 0) || dist <= R * 1.05 || dist >= bestDist) return;
+        if (!(R > 0) || dist <= R * 1.00001 || dist >= bestDist) return;
         const rPx = R * (window.innerHeight / 2) / tanHalf / dist;
         if (rPx < CURSOR_SUN.minRadiusPx) return;
         _tsPos.project(camera);
@@ -4584,7 +4640,7 @@ function setupTouchSun(canvas) {
         touchSun.timer = setTimeout(() => {
             touchSun.timer = null;
             if (touchSun.id === null) return;
-            const body = bodyDiscAt(touchSun.x, touchSun.y);
+            const body = cursorLightOn && bodyDiscAt(touchSun.x, touchSun.y);
             if (!body) return;
             touchSun.active = true;
             touchSun.body = body;
@@ -8491,17 +8547,27 @@ function hideTimelinePanel() {
     }
 }
 
+// Light up Now while the clock shows the real time (within a minute)
+let nowButtonLit = null;
+function updateNowButton() {
+    const lit = Math.abs(simDate.getTime() - Date.now()) < 60000;
+    if (lit === nowButtonLit) return;
+    nowButtonLit = lit;
+    document.getElementById('tl-goto-now')?.classList.toggle('active', lit);
+}
+
 function updateTimelineDisplay(force = false) {
     const el = document.getElementById('tl-date-display');
     if (!el) return;
     const d = simDate;
-    const displayedMinute = Math.floor(d.getTime() / 60000);
-    if (!force && displayedMinute === lastTimelineDisplayMinute) return;
-    lastTimelineDisplayMinute = displayedMinute;
+    const displayedSecond = Math.floor(d.getTime() / 1000);
+    if (!force && displayedSecond === lastTimelineDisplaySecond) return;
+    lastTimelineDisplaySecond = displayedSecond;
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const hh = String(d.getUTCHours()).padStart(2, '0');
     const mm = String(d.getUTCMinutes()).padStart(2, '0');
-    el.textContent = `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${hh}:${mm} UTC`;
+    const ss = String(d.getUTCSeconds()).padStart(2, '0');
+    el.textContent = `${months[d.getUTCMonth()]} ${d.getUTCDate()}, ${d.getUTCFullYear()} · ${hh}:${mm}:${ss} UTC`;
 }
 
 function syncTimelineUI() {
@@ -8755,8 +8821,14 @@ function setupPopupMenus() {
             menu.classList.toggle('open', open);
             button.setAttribute('aria-expanded', open ? 'true' : 'false');
         };
-        button.addEventListener('click', (e) => { e.stopPropagation(); setOpen(!menu.classList.contains('open')); });
-        if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+        const hoverMenus = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+        button.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // (the compass button does its own thing on click; hovering shows the menu)
+            if (button.id === 'compass-btn' && hoverMenus) return;
+            setOpen(!menu.classList.contains('open'));
+        });
+        if (hoverMenus) {
             let closeTimer = null;
             menu.addEventListener('mouseenter', () => { clearTimeout(closeTimer); setOpen(true); });
             menu.addEventListener('mouseleave', () => { closeTimer = setTimeout(() => setOpen(false), 250); });

@@ -10,8 +10,8 @@
 // its true size seen from the Sun in every scale mode. Built the first time a
 // galaxy is big enough on screen to see.
 import * as THREE from 'three';
-import { raDecToAppFrame, LY } from './celestialData.js?v=347';
-import { FAN_GLSL_UNIFORMS, FAN_GLSL_FUNCTIONS, FAN_DEFINES, makeFanUniforms, newFanState, stepFan } from './milkyWay.js?v=347';
+import { raDecToAppFrame, LY } from './celestialData.js?v=349';
+import { FAN_GLSL_UNIFORMS, FAN_GLSL_FUNCTIONS, FAN_DEFINES, makeFanUniforms, newFanState, stepFan } from './milkyWay.js?v=349';
 
 // pa: position angle of the major axis on the sky (° east of north);
 // inc: tilt (0 face-on, 90 edge-on). Sizes are stellar-disk radii.

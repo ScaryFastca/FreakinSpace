@@ -8,7 +8,7 @@
     <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
-    <link rel="stylesheet" href="css/styles.css?v=53">
+    <link rel="stylesheet" href="css/styles.css?v=55">
     <script type="importmap">
     {
         "imports": {
@@ -200,14 +200,22 @@
                     <div class="popup-hint popup-note" id="pull-far-note"></div>
                 </div>
             </div>
-            <button id="compass-btn" class="toggle-btn" title="North up (Ctrl + drag to rotate the view)" aria-label="North up">
-                <svg id="compass-needle" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-                    <polygon points="12,2 16,12 12,10.5 8,12" fill="#ff5a5a"/>
-                    <polygon points="12,22 16,12 12,13.5 8,12" fill="#cce0ff"/>
-                    <text x="12" y="8.6" text-anchor="middle" font-size="5" fill="#fff" font-family="sans-serif">N</text>
-                </svg>
-                <span class="toggle-label">North up</span>
-            </button>
+            <!-- North up: click for north, hover (or tap) for the other ups -->
+            <div class="popup-menu" id="north-menu">
+                <button id="compass-btn" class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false" title="North up (Ctrl + drag to rotate the view)" aria-label="North up">
+                    <svg id="compass-needle" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                        <polygon points="12,2 16,12 12,10.5 8,12" fill="#ff5a5a"/>
+                        <polygon points="12,22 16,12 12,13.5 8,12" fill="#cce0ff"/>
+                        <text x="12" y="8.6" text-anchor="middle" font-size="5" fill="#fff" font-family="sans-serif">N</text>
+                    </svg>
+                    <span class="toggle-label">North up</span>
+                    <span class="popup-caret" aria-hidden="true">▴</span>
+                </button>
+                <div class="popup-menu-panel" role="menu">
+                    <button type="button" class="popup-row popup-action" data-roll="north">North up <span class="popup-hint">the planet's north pole</span></button>
+                    <button type="button" class="popup-row popup-action" data-roll="ecliptic">Solar System up <span class="popup-hint">the planets' orbits level</span></button>
+                </div>
+            </div>
             <button id="camera-lock-toggle" class="toggle-btn">
                 <span class="toggle-label">Cam moves with object:</span>
                 <span id="camera-lock-mode">On</span>
@@ -228,57 +236,52 @@
                 </div>
             </div>
             <span id="custom-orbit-hint" hidden role="status">Drag planets or moons along their orbits · Esc cancels</span>
-            <!-- Stars menu: opens on hover (mouse) or tap (touch) -->
-            <div class="popup-menu" id="stars-menu">
+            <!-- Display: what's shown (stars, small bodies, satellites, Earth) -->
+            <div class="popup-menu" id="display-menu">
                 <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
-                    <span class="toggle-label">Stars</span>
+                    <span class="toggle-label">Display</span>
                     <span class="popup-caret" aria-hidden="true">▴</span>
                 </button>
-                <div class="popup-menu-panel" role="menu">
-                    <label class="popup-row"><input type="checkbox" id="menu-background-stars" checked> Background stars</label>
-                    <label class="popup-row popup-slider-row">Milky Way glow <span class="popup-hint">night sky band</span>
-                        <input type="range" id="menu-milky-way-glow" min="0" max="100" value="60" aria-label="Milky Way glow"></label>
-                    <label class="popup-row"><input type="checkbox" id="menu-milky-way" checked> Milky Way <span class="popup-hint">3D, when zoomed out</span></label>
-                    <label class="popup-row"><input type="checkbox" id="menu-big-stars" checked> Big stars <span class="popup-hint">Betelgeuse, Sirius…</span></label>
-                    <label class="popup-row"><input type="checkbox" id="menu-constellations"> Constellations</label>
+                <div class="popup-menu-panel display-panel" role="menu">
+                    <div class="display-col">
+                        <div class="popup-heading popup-heading-first">Stars</div>
+                        <label class="popup-row"><input type="checkbox" id="menu-background-stars" checked> Background stars</label>
+                        <label class="popup-row popup-slider-row">Milky Way glow <span class="popup-hint">night sky band</span>
+                            <input type="range" id="menu-milky-way-glow" min="0" max="100" value="60" aria-label="Milky Way glow"></label>
+                        <label class="popup-row"><input type="checkbox" id="menu-milky-way" checked> Milky Way <span class="popup-hint">3D, when zoomed out</span></label>
+                        <label class="popup-row"><input type="checkbox" id="menu-big-stars" checked> Big stars <span class="popup-hint">Betelgeuse, Sirius…</span></label>
+                        <label class="popup-row"><input type="checkbox" id="menu-constellations"> Constellations</label>
+                    </div>
+                    <div class="display-col">
+                        <div class="popup-heading popup-heading-first">Small bodies</div>
+                        <label class="popup-row"><input type="checkbox" data-small-group="dwarf" checked> Dwarf planets <span class="popup-hint">Pluto, Eris, Ceres…</span></label>
+                        <label class="popup-row"><input type="checkbox" data-small-group="asteroid" checked> Asteroids <span class="popup-hint">Apophis</span></label>
+                        <label class="popup-row"><input type="checkbox" data-small-group="comet" checked> Comets <span class="popup-hint">Halley</span></label>
+                        <label class="popup-row"><input type="checkbox" data-small-group="interstellar" checked> Interstellar objects <span class="popup-hint">ʻOumuamua…</span></label>
+                        <label class="popup-row"><input type="checkbox" data-small-group="spacecraft" checked> Spacecraft <span class="popup-hint">Voyagers, New Horizons</span></label>
+                        <div class="popup-heading"></div>
+                        <label class="popup-row"><input type="checkbox" id="menu-small-orbits" checked> Show their orbits and paths</label>
+                        <label class="popup-row"><input type="checkbox" id="menu-small-true-size"> True size <span class="popup-hint">tiny: pick from the list, then zoom in</span></label>
+                    </div>
+                    <div class="display-col">
+                        <div class="popup-heading popup-heading-first" id="satellites-heading" title="Live satellite positions from CelesTrak">Satellites <span id="satellites-loading" class="popup-hint" hidden>loading…</span></div>
+                        <label class="popup-row"><input type="radio" name="sat-mode" value="Off" checked> Off</label>
+                        <label class="popup-row"><input type="radio" name="sat-mode" value="On"> On <span class="popup-hint">stations, GPS, geostationary</span></label>
+                        <label class="popup-row"><input type="radio" name="sat-mode" value="On + Starlink"> On + Starlink</label>
+                        <div class="popup-heading">Earth</div>
+                        <label class="popup-row"><input type="checkbox" id="menu-globe"> Desktop globe <span class="popup-hint">G</span></label>
+                        <label class="popup-row"><input type="checkbox" id="menu-weather-clouds"> Clouds <span class="popup-hint" id="weather-clouds-status">live, every 3 h</span></label>
+                        <div class="popup-hint popup-note">Today's real cloud cover from weather satellites. It fades away when the timeline is more than a day or two from now; click Now to bring it back.</div>
+                    </div>
                 </div>
             </div>
-            <!-- Small bodies menu -->
-            <div class="popup-menu" id="small-bodies-menu">
-                <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
-                    <span class="toggle-label">Small bodies</span>
-                    <span class="popup-caret" aria-hidden="true">▴</span>
-                </button>
-                <div class="popup-menu-panel" role="menu">
-                    <label class="popup-row"><input type="checkbox" data-small-group="dwarf" checked> Dwarf planets <span class="popup-hint">Pluto, Eris, Ceres…</span></label>
-                    <label class="popup-row"><input type="checkbox" data-small-group="asteroid" checked> Asteroids <span class="popup-hint">Apophis</span></label>
-                    <label class="popup-row"><input type="checkbox" data-small-group="comet" checked> Comets <span class="popup-hint">Halley</span></label>
-                    <label class="popup-row"><input type="checkbox" data-small-group="interstellar" checked> Interstellar objects <span class="popup-hint">ʻOumuamua…</span></label>
-                    <label class="popup-row"><input type="checkbox" data-small-group="spacecraft" checked> Spacecraft <span class="popup-hint">Voyagers, New Horizons</span></label>
-                    <div class="popup-heading"></div>
-                    <label class="popup-row"><input type="checkbox" id="menu-small-orbits" checked> Show their orbits and paths</label>
-                    <label class="popup-row"><input type="checkbox" id="menu-small-true-size"> True size <span class="popup-hint">tiny: pick from the list, then zoom in</span></label>
-                </div>
-            </div>
-            <!-- Weather menu -->
-            <div class="popup-menu" id="weather-menu">
-                <button class="toggle-btn popup-menu-button" aria-haspopup="true" aria-expanded="false">
-                    <span class="toggle-label">Weather</span>
-                    <span class="popup-caret" aria-hidden="true">▴</span>
-                </button>
-                <div class="popup-menu-panel" role="menu">
-                    <label class="popup-row"><input type="checkbox" id="menu-weather-clouds"> Clouds <span class="popup-hint" id="weather-clouds-status">live, every 3 h</span></label>
-                    <div class="popup-hint popup-note">Today's real cloud cover from weather satellites. It fades away when the timeline is more than a day or two from now; click Now to bring it back.</div>
-                </div>
-            </div>
-            <button id="satellites-toggle" class="toggle-btn" title="Live satellite positions from CelesTrak">
-                <span class="toggle-label">Satellites:</span>
-                <span id="satellites-mode">Off</span>
-                <span id="satellites-loading" class="popup-hint" hidden>loading…</span>
+            <button id="cursor-light-toggle" class="toggle-btn" title="Point at a planet or moon to light it with a little sun (touch and hold on phones)">
+                <span class="toggle-label">Pointer light:</span>
+                <span id="cursor-light-mode">On</span>
             </button>
-            <button id="globe-toggle" class="toggle-btn" title="Show Earth as a desktop globe: grid, equator and a tilted stand (G)">
-                <span class="toggle-label">Globe:</span>
-                <span id="globe-mode">Off</span>
+            <button id="time-bar-toggle" class="toggle-btn" title="Show or hide the time controls">
+                <span class="toggle-label">Time bar:</span>
+                <span id="time-bar-mode">On</span>
             </button>
             <button id="night-view-toggle" class="toggle-btn" title="What Earth's night side shows when you zoom in close">
                 <span class="toggle-label">Night view:</span>
@@ -413,6 +416,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=347"></script>
+    <script type="module" src="js/main.js?v=349"></script>
 </body>
 </html>

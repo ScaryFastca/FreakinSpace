@@ -1457,7 +1457,8 @@ body.ui-hidden #magnifier { display: none; }
     white-space: nowrap;
 }
 
-.tl-preset.active {
+.tl-preset.active,
+.tl-now-btn.active {                /* (Now: the clock is at the real time) */
     background: rgba(255, 170, 136, 0.25);
     border-color: rgba(255, 170, 136, 0.8);
     color: #fff;
@@ -2223,7 +2224,8 @@ body.ui-hidden #magnifier { display: none; }
 #imagery-attribution.visible { display: block; }
 
 /* Satellite data couldn't be downloaded (details in the button's tooltip) */
-#satellites-toggle.has-warning::after {
+#satellites-heading.has-warning::after,
+#display-menu .popup-menu-button.has-warning::after {
     content: ' \26A0';
     color: #ffb347;
 }
@@ -2341,6 +2343,16 @@ body.ui-hidden #magnifier { display: none; }
 .popup-slider-row input[type="range"] { flex-basis: 100%; margin: 4px 0 0; accent-color: #4a9eff; }
 .scale-slider-labels { display: flex; justify-content: space-between; font-size: 0.72rem; color: #88aaff; }
 .scale-presets { display: flex; gap: 6px; margin: 10px 0 6px; }
+/* Display menu: three columns side by side (stacked in the phone sheet) */
+.display-panel.popup-menu-panel { min-width: 0; width: max-content; left: auto; right: 0; transform: none; }  /* opens leftward */
+#satellites-loading { text-transform: none; letter-spacing: 0; }
+.popup-menu.open .display-panel { display: flex; gap: 18px; align-items: flex-start; }
+.display-col { min-width: 200px; }
+@media (max-width: 768px), (max-width: 950px) and (max-height: 500px) and (orientation: landscape) {
+    .popup-menu.open .display-panel { display: block; }
+    .display-panel.popup-menu-panel { width: auto; }
+    .display-col + .display-col { margin-top: 10px; }
+}
 .scale-presets .tl-btn { flex: 1; font-size: 0.78rem; padding: 4px 6px; }
 .scale-preset.active {
     background: rgba(255, 170, 136, 0.25);
@@ -2556,6 +2568,10 @@ body.sun-lighting #home-label { pointer-events: none; }
     /* the tabs replace the full-height object list and the controls popup */
     #sidebar, #controls-info, #controls-info-button { display: none !important; }
 }
+@media (min-width: 769px) {
+    #timeline-panel.user-hidden { display: none; }   /* Time bar: Off */
+}
 @media (max-width: 768px) {
     #side-tabs, #side-panel { display: none; }
+    #time-bar-toggle { display: none; }               /* (phones use the Time tab) */
 }
