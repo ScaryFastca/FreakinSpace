@@ -1,21 +1,21 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=344';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=344';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=347';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=347';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=344';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=344';
-import { initCheeseMoon } from './cheeseMoon.js?v=344';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=344';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=344';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=344';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=344';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=344';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=344';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=344';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=347';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=347';
+import { initCheeseMoon } from './cheeseMoon.js?v=347';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=347';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=347';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=347';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=347';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=347';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=347';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=347';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=344';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=344';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=347';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=347';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -702,14 +702,6 @@ const MILKY_WAY_DATA = {
 // Below this on-screen radius the galaxy is picked as one object
 const MILKY_WAY_PICK_MAX_PX = 40;
 let showBigStars = true; // Named star systems (Betelgeuse, Sirius…) as 3D objects
-// Star distances, in scene units per light year. Separate from the planet
-// Scale toggle. "Far" pushes the big stars out so they read as distant points.
-const STAR_SCALES = {
-    near: { label: 'Compressed (near stars)', unitsPerLy: 500 },
-    far: { label: 'Compressed (far stars)', unitsPerLy: 2500 },
-    realistic: { label: 'Realistic', unitsPerLy: 10000 }
-};
-let starScaleMode = 'near';
 
 // ── Continuous distance scale (Scale menu slider) ───────────────────────
 // scaleValue: 0 = maximum compression, 1 = realistic. Distances shrink
@@ -771,9 +763,6 @@ function pulledPositions(sv, systemEdge, linearU = Infinity) {
         return st.dir.clone().multiplyScalar(Math.min(r, st.distLy * linearU));
     });
 }
-// With realistic distances the stars are always realistic; the Stars menu's
-// near/far choice is for decluttering compressed views.
-const effectiveStarScale = () => (scaleValue >= 0.999 ? 'realistic' : starScaleMode);
 // Keep interactive stars distinguishable from the 1-3.5px background field.
 // This is the full diameter of the existing glow/spike sprite, not the star core.
 const COARSE_POINTER_MQ = window.matchMedia('(pointer: coarse)');
@@ -4689,10 +4678,15 @@ function setupMagnifier() {
 
 function renderMagnifier() {
     if (!magnifier.el) return;
-    const body = hoveredBody;
+    // Pointing at a name in a side list: the scope opens by the guide line's
+    // end once the object is on screen, as if the cursor were resting on it
+    const fromList = !!hoveredObjectName;
+    const body = fromList ? (guideTarget.onScreen ? celestialBodies.get(hoveredObjectName) : null) : hoveredBody;
+    const mx = fromList ? guideTarget.x : lastMouseX, my = fromList ? guideTarget.y : lastMouseY;
     let show = false, R = 0, radiusPx = 0;
-    if (body && viewMode === 'map' && !HOVER_NONE_MQ.matches && !mouseButtonsHeld && !flyToAnimation
-        && lastMouseX >= 0 && body.mesh.visible && body.mesh !== celestialBodies.get(currentFocusedBody)?.mesh) {
+    if (body?.mesh && viewMode === 'map' && !HOVER_NONE_MQ.matches && !mouseButtonsHeld && !flyToAnimation
+        && mx >= 0 && body.mesh.visible
+        && (fromList || body.mesh !== celestialBodies.get(currentFocusedBody)?.mesh)) {   // (the list's turn focuses it)
         body.mesh.getWorldPosition(_magPos);
         const dist = camera.position.distanceTo(_magPos);
         R = magnifierRadius(body.mesh);
@@ -4715,9 +4709,12 @@ function renderMagnifier() {
     // Above-right of the cursor (the tooltip sits below-right); with no room
     // above, beside it on the left, centred on the cursor and kept on screen
     const size = MAGNIFIER_PX, gap = 18;
-    const W = window.innerWidth, H = window.innerHeight, mx = lastMouseX, my = lastMouseY;
+    const W = window.innerWidth, H = window.innerHeight;
     const tip = document.getElementById('hover-tooltip');
     const tipRect = tip && !tip.classList.contains('hidden') ? tip.getBoundingClientRect() : null;
+    const sidePanel = document.getElementById('side-panel');
+    const panelRect = sidePanel?.classList.contains('open') ? sidePanel.getBoundingClientRect() : null;
+    const overlaps = (r, l, t) => r && l < r.right && l + size > r.left && t < r.bottom && t + size > r.top;
     const midY = THREE.MathUtils.clamp(my - size / 2, 0, Math.max(0, H - size));
     // First spot that fits on screen without covering the tooltip
     const spots = [
@@ -4728,7 +4725,7 @@ function renderMagnifier() {
         [mx - gap - size, my + gap]                        // below-left
     ];
     const fits = ([l, t]) => l >= 0 && t >= 0 && l + size <= W && t + size <= H
-        && !(tipRect && l < tipRect.right && l + size > tipRect.left && t < tipRect.bottom && t + size > tipRect.top);
+        && !overlaps(tipRect, l, t) && !overlaps(panelRect, l, t);
     let [left, top] = spots.find(fits) || spots[0];
     left = THREE.MathUtils.clamp(left, 0, Math.max(0, W - size));
     top = THREE.MathUtils.clamp(top, 0, Math.max(0, H - size));
@@ -6127,7 +6124,11 @@ function resizeGuideLineCanvas() {
     }
 }
 
+// Where the guide line ends (the object, when on screen), for the magnifier
+const guideTarget = { x: -1, y: -1, onScreen: false };
+
 function drawGuideLine() {
+    guideTarget.onScreen = false;
     if (!guideLineCtx || !guideLineCanvas || !hoveredObjectName) {
         if (guideLineCtx) guideLineCtx.clearRect(0, 0, guideLineCanvas.width, guideLineCanvas.height);
         return;
@@ -6164,6 +6165,7 @@ function drawGuideLine() {
         endY = (-P[5] * v.y / -v.z * 0.5 + 0.5) * H;
         onScreen = endX >= 0 && endX <= W && endY >= 0 && endY <= H;
     }
+    guideTarget.x = endX; guideTarget.y = endY; guideTarget.onScreen = onScreen;
     if (!onScreen) {
         // Direction from the screen centre (straight behind: point down)
         let dx = v.x * P[0], dy = -v.y * P[5];
@@ -7468,9 +7470,8 @@ function computeRawScaleLayout(sv, pulled = false) {
             .sort((x, y) => x - y);
         const p90 = needs.length ? needs[Math.floor((needs.length - 1) * 0.9)] : 0;
         layout.starU = Math.max(lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv), p90);
-    } else if (sv < 0.999 && starScaleMode !== 'realistic') {
-        let u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv) * (starScaleMode === 'far' ? 5 : 1);
-        u = Math.min(u, STAR_UNITS_PER_LY_REALISTIC);
+    } else if (sv < 0.999) {
+        const u = lerpLog([STAR_UNITS_PER_LY_MIN, STAR_UNITS_PER_LY_REALISTIC], sv);
         const info = getStarLayoutInfo();
         let floor = starPairFloor;
         for (const st of info) {
@@ -7657,13 +7658,6 @@ function applyScaleTransition() {
     to.moons.forEach((r, n) => mid.moons.set(n, geo(from.moons.get(n) ?? r, r)));
     applyLayout(mid);
     if (t >= 1) scaleTransition = null;
-}
-
-// Stars menu near/far/realistic choice: re-lay out the stars (animated)
-function setStarScale(mode) {
-    if (!STAR_SCALES[mode] || mode === starScaleMode) return;
-    starScaleMode = mode;
-    setScaleValue(scaleValue, true);
 }
 
 // True distance from the Sun (AU) → scene units, following the planets'
@@ -8750,15 +8744,6 @@ function syncStarsMenu() {
     if (pullNote) pullNote.textContent = scaleMode === 'realistic'
         ? 'Realistic scale always shows true distances; pick Compressed or Max to pull far objects in'
         : 'Brings giant stars, galaxies and quasars in close for comparing (distances squeezed logarithmically; nothing overlaps). The 3D Milky Way is hidden while it’s on';
-    // Pulling far objects in replaces the star-scale choice
-    const locked = scaleMode === 'realistic' || starsPulledInNow;
-    document.querySelectorAll('input[name="star-scale"]').forEach(r => {
-        r.checked = r.value === effectiveStarScale();
-        r.disabled = locked;
-        r.closest('.popup-row')?.classList.toggle('disabled', locked);
-    });
-    const note = document.getElementById('star-scale-note');
-    if (note) note.hidden = !(scaleMode === 'realistic');
 }
 
 // Hover opens on devices with a mouse; click/tap toggles everywhere (phones)
@@ -8787,8 +8772,6 @@ function setupPopupMenus() {
     });
     document.getElementById('menu-big-stars')?.addEventListener('change', toggleBigStars);
     document.getElementById('menu-constellations')?.addEventListener('change', toggleConstellations);
-    document.querySelectorAll('input[name="star-scale"]').forEach(r =>
-        r.addEventListener('change', () => { if (r.checked) setStarScale(r.value); }));
     document.getElementById('menu-pull-far-stars')?.addEventListener('change', e => {
         setPullFarStars(e.target.checked);
         syncStarsMenu();
@@ -10911,12 +10894,12 @@ function startHoverGuide(name) {
         clearTimeout(hoverPanTimer);
     }
     
-    // Start timer for camera rotation (2 seconds)
+    // Start timer for camera rotation
     hoverPanTimer = setTimeout(() => {
         if (hoveredObjectName === name) {
             smoothPanToBody(name);
         }
-    }, 2000);
+    }, 1500);
 }
 
 function cancelHoverGuide() {
