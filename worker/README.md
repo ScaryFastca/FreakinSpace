@@ -9,6 +9,7 @@ come next.
 |---|---|
 | `GET /tle/<group>` | TLE text for `stations`, `gps-ops`, `geo`, `starlink` |
 | `GET /health` | What's cached, how old it is, and the last error |
+| `POST /contact` | The site's contact form (see below) |
 
 ## First deploy (one time)
 
@@ -49,3 +50,32 @@ npx wrangler deploy
 
 `npx wrangler dev --test-scheduled` serves it at http://localhost:8787 with a
 local copy of the KV store. Open `/__scheduled` to run the refresh job.
+
+## Contact form
+
+The site's **Send a message** form posts here. Every message is saved in KV
+for 90 days (Cloudflare dashboard → Storage & Databases → KV → DATA, keys
+starting `msg:`), and emailed to you once Resend is set up. Spam checks are
+listed at the top of `src/contact.js`.
+
+Secrets (each command asks for the value; run from this `worker` folder):
+
+| Secret | What |
+|---|---|
+| `TURNSTILE_SECRET` | Secret key of the Turnstile widget. Its *site* key goes in `js/contact.js` (`TURNSTILE_SITE_KEY`). Set both together: with only the secret, every message is refused |
+| `RESEND_API_KEY` | API key from resend.com |
+| `CONTACT_TO` | Where messages go (the address you signed up to Resend with) |
+
+```
+npx wrangler secret put TURNSTILE_SECRET
+npx wrangler secret put RESEND_API_KEY
+npx wrangler secret put CONTACT_TO
+```
+
+Turnstile: Cloudflare dashboard → Turnstile → Add widget, hostname
+`freakinspace.com` (add `localhost` too for testing), mode Managed.
+
+Testing locally: put `TURNSTILE_SECRET=1x0000000000000000000000000000000AA`
+(Cloudflare's always-pass test key) in `worker/.dev.vars`, run the worker
+locally, set `TURNSTILE_SITE_KEY` to `1x00000000000000000000AA`, and open the
+site at `http://localhost:3000/?localapi`.

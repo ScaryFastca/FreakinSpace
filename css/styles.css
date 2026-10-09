@@ -2575,3 +2575,82 @@ body.sun-lighting #home-label { pointer-events: none; }
     #side-tabs, #side-panel { display: none; }
     #time-bar-toggle { display: none; }               /* (phones use the Time tab) */
 }
+
+/* ── Contact form (info popup → Send a message) ─────────────────────── */
+#contact-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: auto;
+}
+#contact-dialog[hidden] { display: none; }
+#contact-form {
+    position: relative;
+    width: min(440px, 100%);
+    max-height: 100%;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 22px;
+    background: rgba(0, 20, 40, 0.97);
+    border: 1px solid rgba(74, 158, 255, 0.4);
+    border-radius: 10px;
+    box-shadow: 0 6px 30px rgba(0, 0, 0, 0.6), 0 0 20px rgba(74, 158, 255, 0.2);
+}
+#contact-form h3 {
+    margin: 0 0 4px;
+    color: #4a9eff;
+    font-size: 1.05rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+#contact-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: #aaccff;
+    font-size: 0.85rem;
+}
+.contact-optional { color: #6f88bb; font-size: 0.75rem; }
+#contact-form input,
+#contact-form textarea {
+    padding: 8px 10px;
+    background: rgba(0, 10, 25, 0.9);
+    border: 1px solid rgba(74, 158, 255, 0.35);
+    border-radius: 6px;
+    color: #e6efff;
+    font: inherit;
+    font-size: 0.9rem;
+}
+#contact-form textarea { resize: vertical; min-height: 110px; }
+#contact-form input:focus,
+#contact-form textarea:focus { outline: none; border-color: #4a9eff; }
+.contact-close {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 30px;
+    height: 30px;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    color: #88aaff;
+    font-size: 1.5rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.contact-close:hover { background: rgba(74, 158, 255, 0.2); color: #4a9eff; }
+/* (off screen rather than display:none, which some bots check for) */
+.contact-trap { position: absolute; left: -10000px; width: 1px; height: 1px; overflow: hidden; }
+#contact-turnstile:empty { display: none; }
+.contact-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.contact-row .tl-btn { padding: 6px 18px; font-size: 0.9rem; }
+#contact-status { font-size: 0.82rem; color: #88aaff; }
+#contact-status.ok { color: #7ee2a8; }
+#contact-status.error { color: #ff9b7a; }

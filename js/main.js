@@ -1,21 +1,22 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=349';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=349';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=350';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=350';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=349';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=349';
-import { initCheeseMoon } from './cheeseMoon.js?v=349';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=349';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=349';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=349';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=349';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=349';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=349';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=349';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=350';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=350';
+import { initCheeseMoon } from './cheeseMoon.js?v=350';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=350';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=350';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=350';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=350';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=350';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=350';
+import { setupContactForm } from './contact.js?v=350';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=350';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=349';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=349';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=350';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=350';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -2039,6 +2040,7 @@ function init() {
 
     // Setup info popup
     setupInfoPopup();
+    setupContactForm();
     setupControlsInfo();
 
     // Setup mobile bottom nav + sheets

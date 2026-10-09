@@ -8,6 +8,9 @@
 //
 //   GET /tle/<group>   TLE text (stations, gps-ops, geo, starlink)
 //   GET /health        what's cached and how old it is
+//   POST /contact      the site's contact form (see contact.js)
+
+import { contact } from './contact.js';
 
 const CELESTRAK = 'https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&GROUP=';
 const GROUPS = ['stations', 'gps-ops', 'geo', 'starlink'];
@@ -80,9 +83,10 @@ async function health(env) {
 
 export default {
     async fetch(request, env) {
+        const path = new URL(request.url).pathname.replace(/\/+$/, '');
+        if (path === '/contact') return contact(request, env);
         if (request.method === 'OPTIONS') return reply(null, 204);
         if (request.method !== 'GET') return reply('Method not allowed', 405);
-        const path = new URL(request.url).pathname.replace(/\/+$/, '');
         const m = path.match(/^\/tle\/([a-z-]+)$/);
         if (m) return tle(env, m[1]);
         if (path === '/health') return health(env);

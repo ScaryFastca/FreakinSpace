@@ -187,4 +187,4 @@ once every two hours. FreakinSpace caches the lists in your browser to stay with
 ## Status
 
 FreakinSpace is in beta, so expect rough edges and the odd inaccuracy. Questions or
-bug reports: [space@scaryfast.ca](mailto:space@scaryfast.ca) or open an issue.
+bug reports: use **Send a message** in the site's info (i) popup, or open an issue.

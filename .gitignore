@@ -25,3 +25,4 @@ Thumbs.db
 
 # Cloudflare Worker local state
 worker/.wrangler/
+worker/.dev.vars

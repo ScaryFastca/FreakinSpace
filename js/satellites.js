@@ -8,7 +8,7 @@ const CELESTRAK = 'https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&GROUP=
 // The FreakinSpace API (worker/): keeps one copy of each group, refreshed on
 // a schedule, so visitors don't each count against CelesTrak's limit (one
 // download per group per 2 h per network). Empty: straight to CelesTrak
-const SPACE_API = 'https://freakinspace-api.freakinspace.workers.dev';
+export const SPACE_API = 'https://freakinspace-api.freakinspace.workers.dev';
 // CelesTrak updates every ~2 h and asks clients not to re-download more often
 const CACHE_TTL_MS = 2 * 3600 * 1000;
 // A saved copy younger than this is used straight away (refreshed in the

@@ -23,7 +23,7 @@
     <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
-    <link rel="stylesheet" href="css/styles.css?v=55">
+    <link rel="stylesheet" href="css/styles.css?v=56">
     <script type="importmap">
     {
         "imports": {
@@ -344,8 +344,31 @@
                 <button id="info-popup-close">×</button>
                 <h3>Beta Version</h3>
                 <p>This is a new app. It may have bugs and inaccurate information.</p>
-                <p class="info-contact">Questions? <a href="mailto:space@scaryfast.ca">space@scaryfast.ca</a></p>
+                <p class="info-contact">Questions, bugs, ideas? <a href="#" id="contact-open">Send a message</a></p>
             </div>
+        </div>
+
+        <!-- Contact form (js/contact.js; sent through the API worker) -->
+        <div id="contact-dialog" hidden>
+            <form id="contact-form" role="dialog" aria-modal="true" aria-labelledby="contact-title" novalidate>
+                <button type="button" class="contact-close" aria-label="Close">×</button>
+                <h3 id="contact-title">Send a message</h3>
+                <label>Name <span class="contact-optional">optional</span>
+                    <input name="name" type="text" maxlength="100" autocomplete="name"></label>
+                <label>Your email <span class="contact-optional">optional, for a reply</span>
+                    <input name="email" type="email" maxlength="200" autocomplete="email"></label>
+                <label>Message
+                    <textarea id="contact-message" name="message" rows="6" minlength="10" maxlength="4000" required></textarea></label>
+                <!-- Trap for bots: hidden from people, so anything typed here means a script -->
+                <div class="contact-trap" aria-hidden="true">
+                    <label>Website <input name="website" type="text" tabindex="-1" autocomplete="off"></label>
+                </div>
+                <div id="contact-turnstile"></div>
+                <div class="contact-row">
+                    <span id="contact-status" role="status"></span>
+                    <button type="submit" class="tl-btn">Send</button>
+                </div>
+            </form>
         </div>
 
         <button id="info-button" class="hidden" title="About FreakinSpace">i</button>
@@ -431,6 +454,6 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=349"></script>
+    <script type="module" src="js/main.js?v=350"></script>
 </body>
 </html>
