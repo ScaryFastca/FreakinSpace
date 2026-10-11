@@ -1,22 +1,22 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=350';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=350';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=351';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=351';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=350';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=350';
-import { initCheeseMoon } from './cheeseMoon.js?v=350';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=350';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=350';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=350';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=350';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=350';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=350';
-import { setupContactForm } from './contact.js?v=350';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=350';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=351';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=351';
+import { initCheeseMoon } from './cheeseMoon.js?v=351';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=351';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=351';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=351';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=351';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=351';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=351';
+import { setupContactForm } from './contact.js?v=351';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=351';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=350';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=350';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=351';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=351';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -561,10 +561,14 @@ function calculateMoonLatitude(daysSinceJ2000) {
 // alignment epoch. Keep this calculation shared by rendering, scale changes,
 // and distance readouts so those paths cannot drift apart.
 function calculateAlignedOrbitAngle(bodyData) {
-    if (orbitalMode === 'custom') return customOrbitAngles[bodyData.name] ?? 0;
-    const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
     const fallbackPeriod = bodyData.type === 'moon' ? 27.3 : 365.25;
     const period = bodyData.orbitalPeriod || fallbackPeriod;
+    // Custom angles are fixed, so they ignore the clock. The gravity probe moves
+    // the clock to read off orbital speed, so it has to be added by hand here.
+    if (orbitalMode === 'custom') {
+        return (customOrbitAngles[bodyData.name] ?? 0) + (orbitProbeDays / period) * Math.PI * 2;
+    }
+    const elapsedDays = (simDate - alignedStartDate) / MS_PER_DAY;
     return (elapsedDays / period) * Math.PI * 2;
 }
 
@@ -663,6 +667,12 @@ let currentZoomLevel = 'EARTH_MOON';
 let currentFocusedBody = null;
 let scaleMode = 'compressed'; // 'compressed' or 'realistic'
 let orbitalMode = 'aligned'; // aligned, realistic, custom
+// Gravity toggle: off and every planet and moon keeps the velocity it had at
+// that instant and coasts away in a straight line (see the Gravity section).
+let gravityEnabled = true;
+let driftElapsedMs = 0;              // simulated ms of coasting so far
+let orbitProbeDays = 0;              // non-zero only while sampling orbital velocity
+const driftBodies = new Map();       // name → { origin, velocity, quaternion? } in world space
 const CUSTOM_ORBITS_KEY = 'spacemap-custom-orbits-v1'; // old app name kept: renaming would drop saved orbits
 let customOrbitAngles = Object.create(null);
 try {
@@ -1720,6 +1730,7 @@ function init() {
     };
     applyCursorLight();
     document.getElementById('cursor-light-toggle')?.addEventListener('click', () => { cursorLightOn = !cursorLightOn; applyCursorLight(); });
+    document.getElementById('gravity-toggle')?.addEventListener('click', () => setGravity(!gravityEnabled));
     window.addEventListener('keydown', (e) => {
         if (e.code !== 'KeyG' || e.repeat || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
         applyGlobeMode(!isGlobeMode());
@@ -3693,10 +3704,10 @@ function animate() {
         simDate = new Date(simDate.getTime() + (realDeltaMs / 1000) * simulationRate);
         simulationAdvanced = true;
         
-        if (orbitalMode === 'realistic') {
+        if (orbitalMode === 'realistic' && gravityEnabled) {
             updateRealisticPositions(simDate, 'planets');
         }
-        
+
         updateTimelineDisplay();
         // Sync the date picker (throttle to every ~1s to avoid UI jitter)
         if (Math.round(nowMs / 1000) !== Math.round((nowMs - realDeltaMs) / 1000)) {
@@ -3707,6 +3718,14 @@ function animate() {
             }
         }
 
+    }
+
+    // Coasting runs on the timeline's clock, so Pause holds everything still
+    // and the speed slider decides how fast things scatter. Custom mode pins
+    // that clock at zero by design, so there it coasts at a day per second.
+    if (!gravityEnabled && viewMode === 'map') {
+        const driftRate = orbitalMode === 'custom' ? MS_PER_DAY : (simPaused ? 0 : simulationRate);
+        driftElapsedMs += (realDeltaMs / 1000) * driftRate;
     }
 
     // Always increment time for continuous background visual effects (pulsing stars, etc.)
@@ -3744,13 +3763,13 @@ function animate() {
     celestialBodies.forEach((body, name) => {
         if (viewMode !== 'map') return;
 
-        if (body.orbitGroup && body.orbitSpeed && orbitalMode !== 'realistic') {
+        if (body.orbitGroup && body.orbitSpeed && orbitalMode !== 'realistic' && gravityEnabled) {
             // Planet orbiting sun (only in aligned mode; realistic mode uses orbitGroup.rotation.y)
             const angle = calculateAlignedOrbitAngle(body.data);
             orbitOffset(angle, body.orbitRadius, body.mesh.position);
         }
 
-        if (body.parent && body.orbitSpeed && orbitalMode !== 'realistic') {
+        if (body.parent && body.orbitSpeed && orbitalMode !== 'realistic' && gravityEnabled) {
             // Moon orbiting planet (only in aligned mode; realistic mode sets positions in updateRealisticPositions)
             placeMoon(body, calculateAlignedOrbitAngle(body.data), body.orbitRadius);
         }
@@ -3811,9 +3830,13 @@ function animate() {
     });
     
     // Update moon positions in realistic mode now that parent planet rotations are up to date
-    if (viewMode === 'map' && orbitalMode === 'realistic' && (simulationAdvanced || realisticMoonPositionsDirty)) {
+    if (viewMode === 'map' && orbitalMode === 'realistic' && gravityEnabled
+        && (simulationAdvanced || realisticMoonPositionsDirty)) {
         updateRealisticPositions(simDate, 'moons');
     }
+
+    // Gravity off: every planet and moon coasts along the velocity it had
+    if (viewMode === 'map' && !gravityEnabled) applyGravityDrift();
 
     // Project moon transit shadows onto their parent planets
     updateMoonShadows();
@@ -7590,6 +7613,10 @@ function applyLayout(layout) {
     currentStarUnitsPerLy = layout.starU;
     currentSystemEdge = layout.systemEdge;
     realisticMoonPositionsDirty = true; // moons re-placed even while paused
+    // Changing Scale moves the orbits themselves, so a coast in progress is
+    // measured in stale units. Re-read it from the new layout: bodies sit back
+    // on their orbits for the length of the glide, then set off again.
+    if (!gravityEnabled && !measuringDrift) measureDrift();
 }
 
 // Pulled-in star positions (scene units): log distance × starU, each star at
@@ -8349,6 +8376,123 @@ function updateRealisticPositions(date, phase = 'all') {
     }
 }
 
+
+// ── Gravity toggle ───────────────────────────────────────────────────────
+// Turning gravity off cuts the string: each planet and moon keeps the velocity
+// it had at that moment and coasts in a straight line. Nothing here integrates
+// forces — with no gravity there are none, so a body's path is just
+// origin + velocity · t, which stays exact however fast the timeline runs.
+const DRIFT_PROBE_DAYS = 0.05;  // ~72 min: short enough that the chord is the tangent
+const _driftPoint = new THREE.Vector3();
+const _driftQuat = new THREE.Quaternion();
+let measuringDrift = false;
+
+function isDriftable(body) {
+    if (!body?.data?.orbitalPeriod) return false;
+    return (body.type === 'planet' && body.orbitGroup) || (body.type === 'moon' && body.parent);
+}
+
+// Put every planet and moon where the current mode says it belongs, in the
+// order the animation loop uses. placeMoon cancels out the parent's spin, so
+// the parent has to be turned to the same date first — otherwise moving the
+// clock appears to whip the moons around their planet once a planet-day.
+function placeOrbitingBodies() {
+    if (orbitalMode === 'realistic') updateRealisticPositions(simDate, 'planets');
+    else celestialBodies.forEach(body => {
+        if (body.orbitGroup && body.orbitSpeed) {
+            orbitOffset(calculateAlignedOrbitAngle(body.data), body.orbitRadius, body.mesh.position);
+        }
+    });
+    scene.updateMatrixWorld(true);  // orbit groups, before orientBody reads their quaternions
+    celestialBodies.forEach((body, name) => { if (body.type === 'planet') orientBody(name); });
+    if (orbitalMode === 'realistic') updateRealisticPositions(simDate, 'moons');
+    else celestialBodies.forEach(body => {
+        if (body.parent && body.orbitSpeed) {
+            placeMoon(body, calculateAlignedOrbitAngle(body.data), body.orbitRadius);
+        }
+    });
+    scene.updateMatrixWorld(true);
+}
+
+// World position and velocity of every orbiting body, read by moving the clock
+// a sliver and asking the real placement code where things went. That way
+// Aligned, Realistic (Kepler, so the speed varies round the ellipse) and Custom
+// all report their own speeds, and the Moon's tilted orbit needs no special case.
+function measureDrift() {
+    driftBodies.clear();
+    driftElapsedMs = 0;
+    measuringDrift = true;
+
+    const sample = () => {
+        placeOrbitingBodies();
+        const positions = new Map();
+        celestialBodies.forEach((body, name) => {
+            if (isDriftable(body)) positions.set(name, body.mesh.getWorldPosition(new THREE.Vector3()));
+        });
+        return positions;
+    };
+
+    const realDate = simDate;
+    const probeMs = DRIFT_PROBE_DAYS * MS_PER_DAY;
+    const before = sample();
+    simDate = new Date(realDate.getTime() + probeMs);
+    orbitProbeDays = DRIFT_PROBE_DAYS;
+    const after = sample();
+    simDate = realDate;
+    orbitProbeDays = 0;
+    placeOrbitingBodies();  // put everything back where it was
+
+    before.forEach((origin, name) => {
+        const body = celestialBodies.get(name);
+        const drift = { origin, velocity: after.get(name).sub(origin).divideScalar(probeMs) };
+        // Moons are tidally locked by placeMoon, which stops running once they
+        // are adrift. Hold the facing they had instead, or they would tumble
+        // along with their parent's spin.
+        if (body.type === 'moon') drift.quaternion = body.mesh.getWorldQuaternion(new THREE.Quaternion());
+        driftBodies.set(name, drift);
+    });
+    measuringDrift = false;
+}
+
+function placeDriftingBody(body, drift) {
+    const mesh = body.mesh;
+    const parent = mesh.parent;
+    if (!parent) return;
+    parent.updateWorldMatrix(true, false);
+    _driftPoint.copy(drift.velocity).multiplyScalar(driftElapsedMs).add(drift.origin);
+    mesh.position.copy(parent.worldToLocal(_driftPoint));
+    if (drift.quaternion) {
+        mesh.quaternion.copy(parent.getWorldQuaternion(_driftQuat).invert()).multiply(drift.quaternion);
+    }
+}
+
+function applyGravityDrift() {
+    // Planets first: a moon's straight line is worked out in its parent's frame,
+    // so the parent has to be in place before the moon is converted back into it.
+    driftBodies.forEach((drift, name) => {
+        const body = celestialBodies.get(name);
+        if (body?.type === 'planet') placeDriftingBody(body, drift);
+    });
+    driftBodies.forEach((drift, name) => {
+        const body = celestialBodies.get(name);
+        if (body?.type === 'moon') placeDriftingBody(body, drift);
+    });
+}
+
+function setGravity(on) {
+    if (on === gravityEnabled) return;
+    gravityEnabled = on;
+    const label = document.getElementById('gravity-mode');
+    if (label) label.textContent = gravityEnabled ? 'On' : 'Off';
+    if (!gravityEnabled) {
+        measureDrift();
+    } else {
+        driftBodies.clear();
+        driftElapsedMs = 0;
+        realisticMoonPositionsDirty = true;
+        placeOrbitingBodies();  // snap back onto the orbits, even while paused
+    }
+}
 
 // Sample the same placement functions used by rendering, including the parent's
 // tilt/spin for moons. Restore the mesh so this calculation has no scene effects.
