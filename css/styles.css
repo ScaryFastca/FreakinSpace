@@ -2654,3 +2654,14 @@ body.sun-lighting #home-label { pointer-events: none; }
 #contact-status { font-size: 0.82rem; color: #88aaff; }
 #contact-status.ok { color: #7ee2a8; }
 #contact-status.error { color: #ff9b7a; }
+#impact-panel { position: fixed; z-index: 120; top: 80px; right: 18px; width: min(340px, calc(100vw - 36px)); box-sizing: border-box; padding: 18px; border: 1px solid #a87443; border-radius: 14px; background: rgba(12, 19, 30, .96); color: #e7edf6; font: 13px/1.5 sans-serif; box-shadow: 0 12px 40px #0008; }
+#impact-panel[hidden] { display: none; }
+#impact-panel p { margin: 10px 0; }
+.impact-heading, .impact-actions { display: flex; align-items: center; gap: 10px; }
+.impact-heading { justify-content: space-between; }
+#impact-panel button { background: #263349; color: #fff; border: 1px solid #52627a; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+#impact-time { width: 100%; accent-color: #ffb263; margin: 10px 0; }
+#impact-stage { color: #ffbc79; }
+#impact-panel .impact-note { color: #aab8cb; font-size: 11px; }
+#impact-panel a { color: #a9d8ff; }
+@media (max-width: 600px) { #impact-panel { top: 65px; right: 12px; padding: 12px; } }

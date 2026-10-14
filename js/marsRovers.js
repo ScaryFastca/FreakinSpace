@@ -6,7 +6,7 @@
 // used. Ingenuity and Zhurong no longer move, so they're fixed here.
 
 import * as THREE from 'three';
-import { SPACE_API } from './satellites.js?v=351';
+import { SPACE_API } from './satellites.js?v=352';
 
 const MARS_RADIUS_KM = 3389.5;
 

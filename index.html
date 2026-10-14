@@ -23,7 +23,7 @@
     <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48">
     <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
     <link rel="apple-touch-icon" href="apple-touch-icon.png">
-    <link rel="stylesheet" href="css/styles.css?v=56">
+    <link rel="stylesheet" href="css/styles.css?v=57">
     <script type="importmap">
     {
         "imports": {
@@ -290,6 +290,7 @@
                     </div>
                 </div>
             </div>
+            <button id="impact-launch" class="toggle-btn" title="Replay the Chicxulub asteroid impact on Earth">Chicxulub impact</button>
             <button id="gravity-toggle" class="toggle-btn" title="Switch gravity off and every planet and moon carries straight on in whatever direction it was going">
                 <span class="toggle-label">Gravity:</span>
                 <span id="gravity-mode">On</span>
@@ -458,6 +459,15 @@
     <canvas id="space-canvas"></canvas>
     <canvas id="travel-streaks" aria-hidden="true"></canvas>
 
-    <script type="module" src="js/main.js?v=351"></script>
+    <section id="impact-panel" hidden aria-label="Chicxulub impact replay">
+        <div class="impact-heading"><strong>Chicxulub · 66 million years ago</strong><button id="impact-close" aria-label="Close impact replay">×</button></div>
+        <p>~10 km asteroid · ~180 km crater · Yucatán, Mexico</p>
+        <p id="impact-stage" role="status"></p>
+        <input id="impact-time" type="range" min="0" max="40" step="0.05" value="0" aria-label="Impact replay progress">
+        <div class="impact-actions"><button id="impact-play">Pause</button><button id="impact-reset">Restart</button><span>40-second replay</span></div>
+        <p class="impact-note">Illustrative sequence on today’s Earth. Time is compressed; asteroid, flash and ejecta are enlarged. Wave and dust are schematic, not a physics or climate prediction.</p>
+        <a href="https://www.lpi.usra.edu/science/kring/Chicxulub/" target="_blank" rel="noopener noreferrer">Science &amp; sources ↗</a>
+    </section>
+    <script type="module" src="js/main.js?v=352"></script>
 </body>
 </html>

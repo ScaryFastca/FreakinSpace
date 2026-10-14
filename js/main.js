@@ -1,23 +1,24 @@
 // Local imports carry the same ?v= as main.js in index.html so browsers refetch
 // them on deploy; bump all together (only main.js imports local modules).
-import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=351';
-import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=351';
+import { stellarTime, enhanceStarSurface, createCorona, createStellarLimb } from './stellarEffects.js?v=352';
+import { createBlackHoleVisual, BLACK_HOLE_REACH } from './blackHole.js?v=352';
 import * as THREE from 'three';
-import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=351';
-import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=351';
-import { initCheeseMoon } from './cheeseMoon.js?v=351';
-import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=351';
-import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=351';
-import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=351';
-import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=351';
-import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=351';
-import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=351';
-import { setupContactForm } from './contact.js?v=351';
-import { initMarsRovers, updateMarsRovers, marsRobotNear } from './marsRovers.js?v=351';
-import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=351';
+import { createChicxulub } from './chicxulub.js?v=352';
+import { initISS, prepareISS, updateISS, issState, getISSGroup, ISS_DATA } from './iss.js?v=352';
+import { updateEarthTiles, tileLighting, setNightStyle, TORCH_GLSL } from './earthTiles.js?v=352';
+import { initCheeseMoon } from './cheeseMoon.js?v=352';
+import { launchUfos, updateUfos, ufoAttackActive } from './ufos.js?v=352';
+import { createMilkyWay, updateMilkyWay, suspendMilkyWayFan, createMilkyWaySkyGlow, setMilkyWaySkyGlow } from './milkyWay.js?v=352';
+import { createGalaxies, updateGalaxies, suspendGalaxyFans } from './galaxies.js?v=352';
+import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=352';
+import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=352';
+import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=352';
+import { setupContactForm } from './contact.js?v=352';
+import { initMarsRovers, updateMarsRovers, marsRobotNear } from './marsRovers.js?v=352';
+import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=352';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=351';
-import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=351';
+import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=352';
+import { generatePlanetTexture, generateStarTexture, generateStarSpriteTexture, createAtmosphereTexture } from './textures.js?v=352';
 
 // Pull confirmed mapped exoplanets into the true-scale lineup without
 // duplicating their physical data. Hypothetical companions remain excluded.
@@ -1069,6 +1070,8 @@ function retargetFocus(name) {
 // user can keep scrolling down into it. Worked in Earth's own frame so the
 // spot stays put while Earth spins during the flight.
 let earthSpotFlight = null;
+let chicxulub = null;
+let impactPreviousPaused = true;
 const EARTH_SPOT_FLIGHT_MS = 2200;
 const _spotQuat = new THREE.Quaternion();
 const _spotVec = new THREE.Vector3();
@@ -1641,6 +1644,18 @@ function init() {
     }
     initMarsRovers(celestialBodies.get('Mars')?.mesh);
     setupStellarReferenceMeshes();
+    chicxulub = createChicxulub({
+        earth: celestialBodies.get('Earth').mesh,
+        onStart: direction => {
+            if (viewMode !== 'map') toggleViewMode(null, false);
+            impactPreviousPaused = simPaused;
+            simPaused = true;
+            updateTimelineDisplay();
+            document.querySelectorAll('.popup-menu.open').forEach(menu => menu.classList.remove('open'));
+            flyToEarthSpot(direction, 2200, 9000);
+        },
+        onEnd: () => { simPaused = impactPreviousPaused; updateTimelineDisplay(); }
+    });
     createStarField();
     milkyWay = createMilkyWay();
     scene.add(milkyWay);
@@ -3850,6 +3865,7 @@ function animate() {
     cheeseMoon?.update(simDate, viewMode === 'map');
     updateCheeseTour();
     updateWeather(celestialBodies.get('Earth')?.mesh, camera, simDate, viewMode === 'map');
+    chicxulub?.update(realDeltaMs / 1000, viewMode === 'map');
     updateSatelliteIntro();
     updateSatellites(celestialBodies.get('Earth')?.mesh, simDate, viewMode === 'map');
 
