@@ -13,6 +13,7 @@ import { setCloudLayer, updateWeather, cloudLayerStatus } from './weather.js?v=3
 import { setGlobeMode, updateGlobeMode, isGlobeMode } from './globeMode.js?v=351';
 import { initSmallBodies, updateSmallBodies, setSmallBodyGroupVisible, setSmallBodyOrbitsVisible, setSmallBodyTrueSize } from './smallBodies.js?v=351';
 import { setupContactForm } from './contact.js?v=351';
+import { initMarsRovers, updateMarsRovers, marsRobotNear } from './marsRovers.js?v=351';
 import { SATELLITE_MODES, setSatelliteMode, setSatelliteStatusListener, updateSatellites, satelliteCounts, setSatellitePreview, satellitesReady, satellitesAnyReady, satellitesLoading } from './satellites.js?v=351';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { solarSystem, nearbyStars, sizeComparison, ZOOM_LEVELS, calculateStarPosition, LY, AU, OBJECT_FACTS, BLACK_HOLE_SHADOW_FACT, SURFACE_FEATURES, SURFACE_RADIUS_KM } from './celestialData.js?v=351';
@@ -1638,6 +1639,7 @@ function init() {
         console.warn('Easter egg unavailable:', err);
         cheeseMoon = null;
     }
+    initMarsRovers(celestialBodies.get('Mars')?.mesh);
     setupStellarReferenceMeshes();
     createStarField();
     milkyWay = createMilkyWay();
@@ -3758,6 +3760,7 @@ function animate() {
     refreshAUAnchors();
     updateOrbitLineShapes();
     updateSmallBodies(simDate, mapAUToScene, viewMode === 'map', celestialBodies, camera);
+    updateMarsRovers(camera);
 
     // Animate orbits
     celestialBodies.forEach((body, name) => {
@@ -5121,7 +5124,7 @@ function focusOnBody(name) {
     // inflate the bounds (at realistic scale the Moon is ~77 units out).
     const passengers = meshForSizing.children.filter(child =>
         child === userMarker
-        || ['satellites', 'earth tiles', 'ISS trail'].includes(child.name)
+        || ['satellites', 'earth tiles', 'ISS trail', 'mars robots'].includes(child.name)
         || child.name.startsWith('cheese')
         || [...celestialBodies.values()].some(b => b.mesh === child));
     passengers.forEach(child => meshForSizing.remove(child));
@@ -7350,6 +7353,12 @@ function updateTooltipPlace(body, clientX, clientY) {
     if (viewMode !== 'map' || (name !== 'Earth' && !SURFACE_FEATURES[name])) { setTooltipPlace(null); return; }
     const ll = surfaceLatLonUnderPointer(body, clientX, clientY);
     if (!ll || ll.discPx < PLACE_MIN_DISC_PX) { setTooltipPlace(null); return; }
+    if (name === 'Mars') {
+        // A rover or the helicopter within ~14 px of the pointer (the disc's
+        // radius is discPx, so one pixel at its centre is R / discPx km)
+        const robot = marsRobotNear(ll.lat, ll.lon, 14 * SURFACE_RADIUS_KM.Mars / ll.discPx);
+        if (robot) { setTooltipPlace(robot.name, robot.note); return; }
+    }
     if (name !== 'Earth') {
         const f = featureAt(name, ll.lat, ll.lon);
         setTooltipPlace(f?.name || null, f?.note || '');

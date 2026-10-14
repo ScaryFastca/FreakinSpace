@@ -7,10 +7,12 @@
 // group however many people visit.
 //
 //   GET /tle/<group>   TLE text (stations, gps-ops, geo, starlink)
+//   GET /mars/rovers   Perseverance and Curiosity's latest positions (see mars.js)
 //   GET /health        what's cached and how old it is
 //   POST /contact      the site's contact form (see contact.js)
 
 import { contact } from './contact.js';
+import { rovers, refreshRovers, roverHealth } from './mars.js';
 
 const CELESTRAK = 'https://celestrak.org/NORAD/elements/gp.php?FORMAT=tle&GROUP=';
 const GROUPS = ['stations', 'gps-ops', 'geo', 'starlink'];
@@ -26,8 +28,8 @@ const CORS = {
 function reply(body, status = 200, headers = {}) {
     return new Response(body, { status, headers: { ...CORS, ...headers } });
 }
-const json = (obj, status = 200) =>
-    reply(JSON.stringify(obj, null, 2), status, { 'Content-Type': 'application/json; charset=utf-8' });
+const json = (obj, status = 200, headers = {}) =>
+    reply(JSON.stringify(obj, null, 2), status, { 'Content-Type': 'application/json; charset=utf-8', ...headers });
 
 // Fetch one group from CelesTrak and store it. Throws on failure (and notes
 // the failure so nobody retries for a while)
@@ -78,7 +80,7 @@ async function health(env) {
             ? { ageMinutes: Math.round((Date.now() - record.fetchedAt) / 60000), bytes: record.text.length }
             : { cached: false, lastFailure: await env.DATA.get(`failed:${group}`) };
     }
-    return json({ ok: true, tle: out });
+    return json({ ok: true, tle: out, marsRovers: await roverHealth(env) });
 }
 
 export default {
@@ -89,17 +91,21 @@ export default {
         if (request.method !== 'GET') return reply('Method not allowed', 405);
         const m = path.match(/^\/tle\/([a-z-]+)$/);
         if (m) return tle(env, m[1]);
+        if (path === '/mars/rovers') return rovers(env, json);
         if (path === '/health') return health(env);
         return reply('FreakinSpace API', 200, { 'Content-Type': 'text/plain' });
     },
 
-    // Cron (wrangler.toml): refresh every group, one at a time
+    // Cron (wrangler.toml): refresh every group, one at a time, then the rovers
     async scheduled(event, env, ctx) {
         ctx.waitUntil((async () => {
             for (const group of GROUPS) {
                 try { await refreshGroup(env, group); }
                 catch (err) { console.warn(String(err.message)); }
             }
+            // Rovers drive about once a sol; every 3 hours is plenty
+            try { await refreshRovers(env); }
+            catch (err) { console.warn(String(err.message)); }
         })());
     }
 };

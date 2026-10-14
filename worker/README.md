@@ -8,6 +8,7 @@ come next.
 | Endpoint | What |
 |---|---|
 | `GET /tle/<group>` | TLE text for `stations`, `gps-ops`, `geo`, `starlink` |
+| `GET /mars/rovers` | Perseverance and Curiosity's latest positions (NASA's rover map feeds, refreshed with the cron) |
 | `GET /health` | What's cached, how old it is, and the last error |
 | `POST /contact` | The site's contact form (see below) |
 
